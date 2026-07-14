@@ -178,3 +178,8 @@ orig_rec_links, order, needs_review, review_reason` with reasons like
   exactly one leg has no amount anywhere, back-solve it: total − sum(known legs).
 - HTML receipt emails repeat the receipt block (responsive layout) — parse the first
   copy only (cut at `RETURN POLICY DEFINITIONS`) and dedupe tender lines.
+- QuickBooks' public API exposes neither the bank feed's **For Review** queue nor the
+  **Match** action — no connector can do the final Match click. Agents pre-create the
+  entries; a human matches. Connector capability checklist and the situation → QBO
+  API entity mapping (Purchase, `Credit: true`, JournalEntry…) live in
+  [`../docs/07-quickbooks-connector.md`](../docs/07-quickbooks-connector.md).

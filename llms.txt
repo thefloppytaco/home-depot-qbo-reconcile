@@ -21,3 +21,4 @@
 - [README.md](README.md): overview, quick start, privacy model
 - [docs/04-quickbooks-workflow.md](docs/04-quickbooks-workflow.md): the bookkeeping playbook
 - [docs/06-runbook.md](docs/06-runbook.md): the recurring two-pass update loop
+- [docs/07-quickbooks-connector.md](docs/07-quickbooks-connector.md): connector/MCP capability checklist + QBO API entity mapping

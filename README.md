@@ -98,6 +98,7 @@ export instead of the API pull — kept for reference (see [Two builders](#two-b
 | [docs/04-quickbooks-workflow.md](docs/04-quickbooks-workflow.md) | The bookkeeping playbook: how to book each situation in QBO, the store-credit clearing account, the cancellation "ghost" gap, and the date-skew dedupe rule. |
 | [docs/05-daily-receipt-log.md](docs/05-daily-receipt-log.md) | The optional daily automation into Airtable + a genericized scheduled-task template. |
 | [docs/06-runbook.md](docs/06-runbook.md) | A copy-paste recurring runbook to keep QuickBooks current. |
+| [docs/07-quickbooks-connector.md](docs/07-quickbooks-connector.md) | Posting via a QuickBooks connector/MCP: what it must support, the ledger → QBO API entity mapping, and the "For Review" limitation no connector escapes. |
 | [templates/](templates/) | The `accounts.example.yml` config template for your own account/project/card IDs. |
 | [ai/](ai/) | The machine-readable layer for AI agents — data dictionary, invariants, and ready-to-adapt skill templates. See [For AI agents](#for-ai-agents) below. |
 
@@ -238,6 +239,12 @@ templates), and **[llms.txt](llms.txt)**. An agent with this context can run the
 post to QuickBooks under the guardrails in
 [docs/04-quickbooks-workflow.md](docs/04-quickbooks-workflow.md), or mint new skills for
 other workflows per [ai/README.md](ai/README.md).
+
+Posting requires a QuickBooks connector that can actually **write** expenses — many
+(including some first-party ones) only do invoices and reports.
+[docs/07-quickbooks-connector.md](docs/07-quickbooks-connector.md) has the capability
+checklist, the QBO API entity mapping, and the one thing no connector can do (the bank
+feed's "For Review" / Match step — that click stays human).
 
 ---
 

@@ -18,7 +18,10 @@ Resolving amounts needs the Home Depot Pro site (a human, or a browser tool, sig
 ## Steps
 
 1. **Collect candidates.** From QBO For Review (and recent register history) on every
-   Home Depot-facing card account: every **credit** in the window.
+   Home Depot-facing card account: every **credit** in the window. Note: no QuickBooks
+   API/connector can read the For Review queue — pull candidates from the card
+   register/report via the connector, or ask the user to paste their For Review list
+   (see [`../../docs/07-quickbooks-connector.md`](../../docs/07-quickbooks-connector.md)).
 2. **Eliminate the explained ones.** Match each credit against `ledger.csv` rows of
    type `Return` by **amount + card within ±3 days** (never exact date, never by
    last-4 alone). Also check store-credit-earned legs — those never hit the feed, so

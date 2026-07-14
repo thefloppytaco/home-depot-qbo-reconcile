@@ -20,6 +20,18 @@ This is a genericized template: fill every `<...>` from your private `accounts.y
   vendor `<ID>`, card accounts `<ID>`s, job → customer/project `<ID>`s
 - **Cutoff date** `<YYYY-MM-DD>` and the **booking log** from the last run
 
+## Connector requirements
+
+Not every QuickBooks connector can run this — many only do invoices/reports. Verify the
+connected one can: **query Purchases** by account + date range, **search Accounts and
+Customers** (projects are sub-customers), **create a Purchase** with `Credit: true`
+support and project-tagged lines, and **create a JournalEntry** (or Deposit). Full
+checklist and the situation → API-entity mapping:
+[`../../docs/07-quickbooks-connector.md`](../../docs/07-quickbooks-connector.md).
+If the connector is read-only or can't tag projects, downgrade gracefully: produce the
+review-ready posting list and let the user enter it in the UI. Note that **no** connector
+can read the bank feed's For Review queue or click Match — that stays with the user.
+
 ## Steps
 
 1. **Set the window.** Rows after the last booking-log entry, on/after the cutoff.
@@ -42,6 +54,7 @@ This is a genericized template: fill every `<...>` from your private `accounts.y
    - Mixed receipt (return job A + buy job B) → one split transaction; lines sum to
      the actual card charge.
    - `Cancel` rows and mystery feed credits → hand to the cancellation-sweep skill.
+   - (API mapping for each situation: `docs/07-quickbooks-connector.md`.)
 4. **Hold the flagged rows.** Anything with `needs_review = YES` goes to a human list
    with the `review_reason`; never guess a project for `return-project-unknown` rows.
 5. **Propose, then post.** Present the full list of entries you intend to create

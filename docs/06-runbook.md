@@ -8,7 +8,8 @@ starts piling up with Home Depot lines.
   [04-quickbooks-workflow.md](04-quickbooks-workflow.md)). The agent-ready version of this
   pass is [ai/skills/qbo-poster.SKILL.md](../ai/skills/qbo-poster.SKILL.md) (plus
   [ai/skills/cancellation-sweep.SKILL.md](../ai/skills/cancellation-sweep.SKILL.md) for the
-  ghost-credit sweep).
+  ghost-credit sweep). Check your connector can actually write expenses first:
+  [07-quickbooks-connector.md](07-quickbooks-connector.md).
 
 ## One-time setup
 
