@@ -1,0 +1,39 @@
+# accounts.example.yml — your private account/project/card map.
+#
+# Copy this to `accounts.yml` and fill in YOUR own IDs. `accounts.yml` is git-ignored;
+# never commit real IDs. Nothing in the scripts reads this file — it's a reference sheet
+# for you (and any AI agent you hand the posting to). Structure it however suits your books.
+
+company: "Your Company LLC"          # where all Home Depot bookkeeping happens
+
+quickbooks:
+  # QBO account IDs (find them in your Chart of Accounts)
+  store_credit_account:  "<ID>"      # type: Bank / Cash-on-hand. e.g. "HD Store Credit"
+  cogs_supplies:         "<ID>"      # default materials COGS
+  cogs_tools:            "<ID>"      # tools COGS (some HD purchases post here)
+  vendor_home_depot:     "<ID>"      # The Home Depot vendor
+
+  # Credit-card accounts the feed lands in (multiple employee cards often share one)
+  cards:
+    amex_parent:  "<ID>"             # all Amex employee cards feed here
+    visa_parent:  "<ID>"             # Visa sub-cards
+    mastercard:   "<ID>"
+    debit_bank:   "<ID>"
+
+cutoff_date: "YYYY-MM-DD"            # never modify booked history before this date
+
+# Jobs -> QBO customer / project IDs (projects are modeled as customers' projects)
+projects:
+  - job: "123 Example St"
+    customer_id: "<ID>"
+    project_id:  "<ID>"
+  - job: "456 Sample Ave"
+    customer_id: "<ID>"
+    project_id:  "<ID>"
+
+# Card last-4 -> which QBO account it belongs to.
+# tender_roster.csv (from parse_receipts.py) lists every last-4 it saw; map each here.
+card_last4:
+  "0000": "amex_parent"
+  "1111": "visa_parent"
+  "2222": "store_credit_account"    # store-credit / merchandise cards all pool here

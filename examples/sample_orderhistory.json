@@ -1,0 +1,36 @@
+{
+  "pulled": 4,
+  "note": "Synthetic sample — fictional data illustrating the shape build_ledger.py expects.",
+  "rows": [
+    {
+      "date": "2026-06-30", "type": "Sale", "origin": "#0000, Anytown", "store": 0,
+      "job": "123 EXAMPLE ST", "total": 130.97, "pretax": 123.55, "tx": 1001,
+      "receipt": "00054-99306", "invoices": ["4541274"],
+      "tenders": [{"net": "VI", "last4": "1111", "amt": "-130.97"}]
+    },
+    {
+      "date": "2026-06-29", "type": "Sale", "origin": "#0000, Anytown", "store": 0,
+      "job": "456 SAMPLE AVE", "total": 113.26, "pretax": 106.85, "tx": 1002,
+      "receipt": "00052-80045", "invoices": ["6521385"],
+      "tenders": [
+        {"net": "GR", "last4": "2222", "amt": "-47.52"},
+        {"net": "AX", "last4": "0000", "amt": "-65.74"}
+      ]
+    },
+    {
+      "date": "2026-06-28", "type": "Return", "origin": "#0000, Anytown", "store": 0,
+      "job": "", "total": -122.05, "pretax": -115.14, "tx": 1003,
+      "receipt": "00052-90994", "invoices": [],
+      "tenders": [
+        {"net": "AX", "last4": "0000", "amt": "48.26"},
+        {"net": "AX", "last4": "4444", "amt": "26.27"},
+        {"net": "GR", "last4": "2222", "amt": "47.52"}
+      ]
+    },
+    {
+      "date": "2026-06-27", "type": "Cancel", "origin": "#0000, Anytown", "store": 0,
+      "job": "", "total": 0, "pretax": 0, "tx": 1004,
+      "receipt": "", "invoices": ["H0000-000000"], "tenders": []
+    }
+  ]
+}

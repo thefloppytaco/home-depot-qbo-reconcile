@@ -1,0 +1,5 @@
+date,type,origin,store,project,total,pretax,transaction_id,receipt_locator,invoices,tenders,store_credit_amt,store_credit_acct,needs_review,review_reason
+2026-06-30,Sale,"#0000, Anytown",0,123 EXAMPLE ST,130.97,123.55,1001,00054-99306,4541274,Visa..1111=-130.97,,,,
+2026-06-29,Sale,"#0000, Anytown",0,456 SAMPLE AVE,113.26,106.85,1002,00052-80045,6521385,Gift/Store Credit..2222=-47.52 | Amex..0000=-65.74,47.52,HD Store Credit,,
+2026-06-28,Return,"#0000, Anytown",0,456 SAMPLE AVE (via receipt),-122.05,-115.14,1003,00052-90994,,Amex..0000=48.26 | Amex..4444=26.27 | Gift/Store Credit..2222=47.52,47.52,HD Store Credit,,
+2026-06-27,Cancel,"#0000, Anytown",0,,0.0,0.0,1004,,H0000-000000,,,,YES,cancellation

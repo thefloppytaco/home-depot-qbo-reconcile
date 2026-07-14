@@ -1,0 +1,33 @@
+# ── Secrets ────────────────────────────────────────────────
+# Gmail app-password files (only .gmail_creds.template is committed)
+.gmail_creds
+gmail_creds.txt
+src/.gmail_creds
+src/gmail_creds.txt
+
+# Your private account/project/card map
+accounts.yml
+templates/accounts.yml
+
+# ── Your business data — NEVER commit ──────────────────────
+downloads/
+receipts.json
+hd_orderhistory_full.json
+ledger.csv
+reconciliation_report.csv
+tender_roster.csv
+Purchase_History_*.csv
+*.pdf
+*.pdf.txt
+examples/demo-output/
+
+# Allow the synthetic samples through
+!examples/*.csv
+!examples/*.json
+
+# ── Python / OS cruft ──────────────────────────────────────
+__pycache__/
+*.pyc
+.venv/
+venv/
+.DS_Store

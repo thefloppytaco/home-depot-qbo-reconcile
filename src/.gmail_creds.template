@@ -1,0 +1,6 @@
+# Copy this file to ".gmail_creds" (remove the .template) and fill in your own values.
+# Requires 2-Step Verification ON, then create an App Password at:
+#   Google Account -> Security -> 2-Step Verification -> App passwords
+# This file stays on your machine and is gitignored. Do NOT paste it into chat.
+EMAIL=your-receipts-inbox@gmail.com
+APP_PASSWORD=

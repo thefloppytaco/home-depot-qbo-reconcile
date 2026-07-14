@@ -1,0 +1,23 @@
+# home-depot-qbo-reconcile
+
+> Turns a business's Home Depot purchase/return history into a per-project expense
+> ledger and reconciles it into QuickBooks Online — including the store-credit legs,
+> returns, and cancellations that never appear in a bank feed.
+
+## Start here
+
+- [AGENTS.md](AGENTS.md): orientation, repo map, and the rules for agents
+- [ai/context.md](ai/context.md): the data dictionary and the 12 domain invariants
+- [ai/README.md](ai/README.md): skill templates and how to mint new ones
+
+## Skills (ready-to-adapt templates)
+
+- [ai/skills/receipt-log.SKILL.md](ai/skills/receipt-log.SKILL.md): daily Gmail → tracker log
+- [ai/skills/qbo-poster.SKILL.md](ai/skills/qbo-poster.SKILL.md): post ledger windows to QBO
+- [ai/skills/cancellation-sweep.SKILL.md](ai/skills/cancellation-sweep.SKILL.md): resolve ghost credits
+
+## Human docs
+
+- [README.md](README.md): overview, quick start, privacy model
+- [docs/04-quickbooks-workflow.md](docs/04-quickbooks-workflow.md): the bookkeeping playbook
+- [docs/06-runbook.md](docs/06-runbook.md): the recurring two-pass update loop

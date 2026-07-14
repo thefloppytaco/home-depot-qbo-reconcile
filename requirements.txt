@@ -1,0 +1,13 @@
+# The scripts use only the Python standard library — no pip packages required.
+#
+# The one external dependency is a SYSTEM tool, not a Python package:
+#
+#   pdftotext   (from Poppler) — used by parse_receipts.py to read receipt PDFs
+#     macOS:         brew install poppler
+#     Debian/Ubuntu: sudo apt-get install poppler-utils
+#     Windows:       install Poppler and add its bin/ to PATH (or use WSL)
+#
+# Requires Python 3.10+.
+#
+# Tests (tests/) are optional and need: pip install pytest
+# Runtime remains stdlib-only regardless — pytest is a dev/CI dependency only.
