@@ -32,6 +32,24 @@ If the connector is read-only or can't tag projects, downgrade gracefully: produ
 review-ready posting list and let the user enter it in the UI. Note that **no** connector
 can read the bank feed's For Review queue or click Match — that stays with the user.
 
+## Before the first run (setup)
+
+Do this once, before Step 1 of the first-ever run (setup guide for the user:
+`docs/07-quickbooks-connector.md` § *Setting one up*):
+
+- **Smoke-test the connector:** enumerate the QuickBooks tools actually available and map
+  each required capability to a concrete tool — names vary by server, capabilities don't.
+  If Purchase-with-`Credit:true` or JournalEntry creation is missing, STOP and tell the
+  user this connector can't post (offer the read-only fallback).
+- **Confirm the target company.** If multiple QuickBooks connections exist, state which
+  company you're about to post into and have the user confirm it. Wrong-company posting
+  is the worst failure mode of this skill.
+- **Fill the ID map together:** if `accounts.yml` has empty `<ID>`s, look them up via the
+  connector (search accounts, the Home Depot vendor, each job's customer/project) and
+  record them with the user before posting anything.
+- **Keep the first window tiny:** 2–3 days, a couple of entries, user verifies them in
+  the QBO UI and Matches the feed lines — then widen on later runs.
+
 ## Steps
 
 1. **Set the window.** Rows after the last booking-log entry, on/after the cutoff.

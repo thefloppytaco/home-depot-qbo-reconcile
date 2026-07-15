@@ -35,6 +35,51 @@ If your connector can only read, or can't tag lines with a project, don't force 
 the agent produce a review-ready posting list from `ledger.csv` and enter the entries in
 the QBO UI yourself. That's still most of the win.
 
+## Setting one up
+
+Three routes, in rough order of effort:
+
+1. **Your AI client's connector directory.** In Claude, that's Settings → Connectors (other
+   MCP clients have an equivalent); add a QuickBooks connector and authorize it against
+   your company file. Directory connectors vary a lot — several, including first-party
+   ones, are invoices-and-reports only — so run the smoke test below **before** trusting
+   one with a posting run.
+2. **A self-hosted QuickBooks MCP server** that wraps the full QBO Accounting API. Several
+   open-source ones exist, and the API is a plain OAuth2 REST API if you'd rather build
+   your own:
+   - Create a free developer account at **developer.intuit.com** → create an app → note
+     its Client ID / Client Secret. Every new app comes with a **sandbox company** —
+     ideal for the first test run.
+   - Run the MCP server with those credentials and complete its OAuth flow against your
+     company. One QBO **company file = one connection** (one "realm"): if you run several
+     companies, set up one connector instance per company and name them unmistakably —
+     posting to the wrong company is the expensive failure mode.
+   - Register the server with your client (Claude Desktop: Settings → Connectors → add
+     custom connector; Claude Code: `claude mcp add`; other clients: their MCP config).
+   - **Security:** this server holds write access to your books. Use code you (or someone
+     you trust) have reviewed, scope it to one company, and revoke its access from the
+     Intuit developer portal when you stop using it.
+3. **No qualifying connector.** Fall back to the read-only flow above: the agent prepares
+   the posting list, you enter it in the UI.
+
+## First run: smoke test, then dry run
+
+1. **Smoke test.** Ask the agent to list its QuickBooks tools and map them against the
+   checklist above. Tool **names vary between servers** (`create_purchase` vs
+   `create_expense` vs `qbo_create_...`) — the capability is what matters. The two
+   deal-breakers: creating a Purchase with `Credit: true` and project-tagged lines, and
+   creating a JournalEntry (or Deposit). Missing either → this connector can't post.
+2. **Fill your ID map** (`accounts.yml`, from
+   [`../templates/accounts.example.yml`](../templates/accounts.example.yml)). Easiest way:
+   have the agent look everything up through the connector — search accounts (cards, COGS,
+   "HD Store Credit"), the Home Depot vendor, and each job's customer/project — and read
+   the IDs back to you.
+3. **Dry run.** Pick a 2–3 day window. The agent proposes entries only (the
+   [qbo-poster skill](../ai/skills/qbo-poster.SKILL.md) gates on your approval), posts one
+   or two, you verify them in the QBO UI, and you click **Match** when the feed lines
+   arrive. If you built your own server, do this first pass against the Intuit sandbox
+   company. Only then widen the window.
+
 ## How each ledger situation maps to the QBO API
 
 The playbook's situations ([docs/04](04-quickbooks-workflow.md)) in API terms — QBO's

@@ -41,6 +41,9 @@ stdlib-only (plus the `pdftotext` system binary) and take `--help`.
 
 - **Propose, then post.** Never create/modify QuickBooks entries without showing the
   user the exact list first and getting approval.
+- **Verify the connector before a posting run.** Many QuickBooks connectors can't write
+  expenses at all — smoke-test capabilities and confirm the target company first
+  (checklist + setup guide: [`docs/07-quickbooks-connector.md`](docs/07-quickbooks-connector.md)).
 - **Never guess a project.** `needs_review = YES` rows go to a human.
 - **Match, don't Add** pre-created entries when feed lines arrive.
 - Match/dedupe by **amount + date ±3 days**, never exact date, never card last-4.

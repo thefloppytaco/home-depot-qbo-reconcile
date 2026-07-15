@@ -3,6 +3,10 @@
 # Copy this to `accounts.yml` and fill in YOUR own IDs. `accounts.yml` is git-ignored;
 # never commit real IDs. Nothing in the scripts reads this file — it's a reference sheet
 # for you (and any AI agent you hand the posting to). Structure it however suits your books.
+#
+# Filling it in the easy way: an AI agent with your QuickBooks connector can look every
+# ID up for you (search accounts / customers / vendors) — see
+# docs/07-quickbooks-connector.md § "First run".
 
 company: "Your Company LLC"          # where all Home Depot bookkeeping happens
 

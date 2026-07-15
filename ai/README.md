@@ -14,7 +14,9 @@ The skills are **templates**: every `<...>` placeholder (base/table/field IDs, Q
 IDs, cutoff date) must be filled from the user's private copy of
 [`../templates/accounts.example.yml`](../templates/accounts.example.yml) before use. They
 assume connectors (Gmail, a table store, QuickBooks) that vary by setup — adapt the tool
-calls to whatever the user has connected.
+calls to whatever the user has connected. For QuickBooks specifically,
+[`../docs/07-quickbooks-connector.md`](../docs/07-quickbooks-connector.md) covers how to
+set up a qualifying connector, the capability smoke test, and the QBO API entity mapping.
 
 ## Minting a new skill from this repo
 
