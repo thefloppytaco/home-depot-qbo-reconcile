@@ -70,6 +70,8 @@ Array of receipt objects:
 file, format ("register" | "h-order"), store, datetime ("MM/DD/YY HH:MM AM"),
 project (as printed, or null), total (negative for returns), is_return (bool),
 tenders: [ {last4, type, amount|null} ],        # amounts AS PRINTED on the receipt
+line_items: [ {sku, description, amount|null, orig_rec|null} ],  # per-item detail;
+                                                # orig_rec groups returned items by original
 orig_recs: [normalized locators],               # returns: links to original sale(s)
 locator (register receipts), order ("H####-######", h-order receipts),
 card_balance (store-credit card balance line, if printed),
@@ -120,6 +122,14 @@ orig_rec_links, order, needs_review, review_reason` with reasons like
 `tenders(x)!=total(y)`, `multi-store-credit`, `return-no-orig-link`,
 `return-orig-not-in-corpus`, `return-partially-resolved`, `no-project`, `no-tender`.
 
+### `returns_needing_lookup.csv` — the return worklist (from `src/build_ledger.py`)
+
+`date, total, tenders, orig_recs, transaction_id, next_step` — one row per return whose
+project the **offline** ladder rungs (receipt corpus + order-history spine) could not
+resolve. This is the agent's queue for the **external** rungs: search Gmail for the
+original receipt, then check QBO (the original — or the return — is often already booked;
+match by amount + date ±3d and inherit its project). Empty file = nothing left to chase.
+
 ## The invariants (rules you must not break)
 
 1. **Golden rule.** One Home Depot receipt = one coherent set of QBO entries, split by
@@ -128,8 +138,9 @@ orig_rec_links, order, needs_review, review_reason` with reasons like
 2. **Sign conventions.** Ledger `total`: negative = return. Ledger tender legs:
    negative = charge, positive = credit. Receipt tender amounts are as printed.
 3. **A return belongs to the original purchase's project.** Never to a default account,
-   never guessed. If the original can't be resolved (`return-project-unknown`), a human
-   decides.
+   never guessed. Recover it with the **original-receipt lookup ladder** (below) — search
+   the corpus, the order-history spine, Gmail, and QBO itself before giving up. Only when
+   every rung misses (`return-project-unknown`) does a human decide.
 4. **All store credit pools into one clearing account** ("HD Store Credit", type
    Bank/Cash-on-hand). Earned store credit = debit in (credit the job's COGS); spent
    store credit = credit out (debit the job's COGS). After both legs of a receipt are
@@ -160,6 +171,42 @@ orig_rec_links, order, needs_review, review_reason` with reasons like
 12. **Privacy.** Never commit or paste real receipts, exports, `ledger.csv`,
     account IDs, or `.gmail_creds`. Everything generated is git-ignored; keep it that
     way. Synthetic data only in `examples/`.
+
+## Return attribution: the original-receipt lookup ladder
+
+A return's project lives on its **original purchase**, not on the return itself (a return
+receipt's own `PO/JOB` is often blank, generic, or wrong — Home Depot captures the job at
+*purchase* time). Each return carries one or more `ORIG REC:` locators; resolve every one
+before flagging `return-project-unknown`. Walk the ladder in order and stop at the first hit:
+
+1. **Receipt corpus** (`receipts.json`) — the original sale's parsed receipt, matched by
+   normalized locator. (Today's `resolved_projects` / `unresolved_orig_recs` only look here.)
+2. **Order-history spine** (`hd_orderhistory_full.json`) — match the `ORIG REC` locator (or its
+   date + amount) to a spine row and inherit its `job`.
+3. **Gmail** — search the receipt mailbox for the original sale (store + date + amount, or the
+   locator / order #), fetch and parse it, then inherit its job. Originals from months back
+   routinely fall **outside the current download window** — go fetch them, don't assume absent.
+4. **QBO itself** — the original purchase (or the return) is often **already booked** with a
+   project; find it by amount + date (±3 days) across every COGS account and inherit that
+   project. Frequently the *fastest* resolution, not the last resort.
+
+Only when all four miss does the row become `return-project-unknown` for a human. Note which
+rung resolved each return in the booking log.
+
+*Why this matters (real case, 2026-07-14 rcpt 00018-56731):* a return included a $193.41
+shower-faucet set whose `ORIG REC` was an **08/14/25** sale — long before the receipt-download
+window. Steps 1–2 missed it and the whole receipt stalled in review; step 3/4 (Gmail + the
+already-booked original) recover the job (2708 Willow Glen) instead.
+
+## Break receipts down to line items
+
+Parse and keep **per-line-item detail** for every purchase and return — SKU/description,
+extended amount, tax, and (on returns) the `ORIG REC` each line belongs to — alongside the
+transaction row. Rationale: matching returns to originals by locator alone fails whenever the
+locator is missing or the original is outside the corpus. **Line items are the durable key:** a
+returned SKU traces to the exact original purchase (and its project) even when the return's
+`PO/JOB` is blank, and a partially-returned original splits cleanly across jobs. This
+strengthens every rung of the lookup ladder above.
 
 ## Edge cases worth knowing
 

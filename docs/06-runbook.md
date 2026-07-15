@@ -43,8 +43,11 @@ Run from the repo root — outputs land there by default, and every script takes
 for custom paths.
 
 **Produces:** updated `ledger.csv` (the spine), `tender_roster.csv` (card → account map),
-`receipts.json` (detail). Note the newest date and the counts by type (Sale / Return /
-Cancel) and how many rows have a blank PO/Job — that's your handoff into Pass ②.
+`receipts.json` (detail, now with per-line-item breakdown), and
+`returns_needing_lookup.csv` (returns whose project the offline rungs couldn't resolve —
+chase these in Gmail/QBO before handing to a human). Note the newest date and the counts by
+type (Sale / Return / Cancel) and how many rows have a blank PO/Job — that's your handoff
+into Pass ②.
 
 ## Pass ② — post to QuickBooks
 

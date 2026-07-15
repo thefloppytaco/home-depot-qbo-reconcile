@@ -79,6 +79,24 @@ def test_return_receipt_resolves_project_via_orig_rec(parsed_receipts):
     }
 
 
+def test_sale_line_items_captured(parsed_receipts):
+    sale, _ = _sale_and_return(parsed_receipts["recs"])
+    items = sale["line_items"]
+    assert len(items) == 2
+    by_desc = {i["description"]: i for i in items}
+    assert by_desc["FICTIONAL 2X4 STUD 8FT"]["amount"] == 38.90
+    assert by_desc["SAMPLE INTERIOR PAINT GAL"]["amount"] == 76.10
+    assert all(i["orig_rec"] is None for i in items)   # a sale's items have no ORIG REC
+
+
+def test_return_line_items_carry_orig_rec(parsed_receipts):
+    _, ret = _sale_and_return(parsed_receipts["recs"])
+    items = ret["line_items"]
+    assert len(items) == 2
+    # every returned item is grouped under the original sale's locator
+    assert {i["orig_rec"] for i in items} == {"0000|52|71234|06/20/26"}
+
+
 def test_tender_roster_includes_store_credit_card(parsed_receipts):
     with open(parsed_receipts["outdir"] / "tender_roster.csv", newline="") as f:
         rows = list(csv.DictReader(f))
@@ -144,3 +162,56 @@ def test_build_ledger_without_receipts_flags_return_for_review(tmp_path):
     cancel_row = next(r for r in rows if r["date"] == "2026-06-27")
     assert cancel_row["needs_review"] == "YES"
     assert cancel_row["review_reason"] == "cancellation"
+
+    # a return with no resolvable project also lands in the lookup worklist
+    lookup = tmp_path / "returns_needing_lookup.csv"
+    assert lookup.exists()
+    with open(lookup, newline="") as f:
+        wl = list(csv.DictReader(f))
+    assert any(r["date"] == "2026-06-28" for r in wl)
+
+
+def test_return_resolves_via_order_history_spine(tmp_path):
+    """Ladder rung 2: the original sale is only in the order-history spine (its receipt
+    was never emailed), but the return still recovers its project via the ORIG REC on
+    the parsed return receipt. This is the shape of the 08/14/25 shower-faucet case."""
+    orderhistory = {
+        "pulled": 2,
+        "rows": [
+            {   # original sale — present ONLY in the spine, not in any receipt corpus
+                "date": "2025-08-14", "type": "Sale", "origin": "#8119, Faraway", "store": 8119,
+                "job": "2708 WILLOW GLEN", "total": 193.41, "pretax": 182.46, "tx": 5001,
+                "receipt": "00015-58022", "invoices": [],
+                "tenders": [{"net": "AX", "last4": "1018", "amt": "-193.41"}],
+            },
+            {   # the return, months later, with a blank job
+                "date": "2026-07-14", "type": "Return", "origin": "#2584, Town", "store": 2584,
+                "job": "", "total": -193.41, "pretax": -182.46, "tx": 5673,
+                "receipt": "00018-56731", "invoices": [],
+                "tenders": [{"net": "AX", "last4": "1018", "amt": "193.41"}],
+            },
+        ],
+    }
+    receipts = [{
+        "file": "return.pdf", "format": "register", "is_return": True,
+        "datetime": "07/14/26 02:52 PM", "total": -193.41,
+        "project": None, "orig_recs": ["8119|15|58022|08/14/25"],
+        "resolved_projects": [], "unresolved_orig_recs": ["8119|15|58022|08/14/25"],
+        "tenders": [{"last4": "1018", "type": "AMEX", "amount": 193.41}],
+        "line_items": [],
+    }]
+    oh_path = tmp_path / "oh.json"
+    rc_path = tmp_path / "receipts.json"
+    oh_path.write_text(json.dumps(orderhistory))
+    rc_path.write_text(json.dumps(receipts))
+    ledger_path = tmp_path / "ledger.csv"
+    result = run([
+        str(SRC_DIR / "build_ledger.py"),
+        "--orderhistory", str(oh_path), "--receipts", str(rc_path), "-o", str(ledger_path),
+    ])
+    assert result.returncode == 0, result.stderr
+    with open(ledger_path, newline="") as f:
+        rows = {r["date"]: r for r in csv.DictReader(f)}
+    ret = rows["2026-07-14"]
+    assert ret["project"] == "2708 WILLOW GLEN (via order-history)"
+    assert ret["needs_review"] == ""

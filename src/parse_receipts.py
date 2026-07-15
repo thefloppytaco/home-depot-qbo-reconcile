@@ -6,7 +6,10 @@ Handles two receipt formats:
   2) Customer Receipt / Special Services Invoice (H-order desk orders)
 
 Extracts per receipt: type (SALE/RETURN), store, datetime, project (PO/Job),
-totals, tenders [(last4, type, amount)], and for returns the ORIG REC links.
+totals, tenders [(last4, type, amount)], line_items [(sku, description, amount,
+orig_rec)], and for returns the ORIG REC links. Line items are grouped by the ORIG REC
+they belong to, so a returned item traces back to its original purchase even when the
+return's own PO/JOB is blank.
 
 Run:  python3 parse_receipts.py [folder]
 The folder defaults to ./downloads, falling back to this script's directory for
@@ -66,6 +69,59 @@ def money(s):
     except ValueError:
         return None
 
+# --- Line-item extraction ----------------------------------------------------
+# Durable per-item detail (SKU, description, amount) is what lets a returned item
+# be traced back to the exact original purchase — and its project — even when the
+# return's own PO/JOB is blank. See ai/context.md "Break receipts down to line items".
+# amount may be jammed against the description on wide items ("...wi-99.99"), so the
+# separator before it is optional.
+_ITEM_SKU_RE = re.compile(r'^\s*(\d{3,4}-\d{3}-\d{3})\s+(.+?)\s*(-?\$?[\d,]+\.\d{2})\s*$')
+_ITEM_RETURNED_RE = re.compile(r'^\s*RETURNED:\s*(.+?)\s*$', re.I)
+_ITEM_TRAIL_RE = re.compile(r'^\s*(.+?)\s+\$(-?[\d,]+\.\d{2})\s*$')
+_ITEM_QTY_RE = re.compile(r'\s+\d+\s*@\s*[\d.]+\s*$')
+_ITEM_SKIP = ("SUBTOTAL", "SALES TAX", "TOTAL", "ORIG REC", "PO/JOB", "THANK YOU",
+              "REFUND", "RETURN POLICY", "CARD BALANCE", "BALANCE", "AUTH",
+              "INVOICE", "USD$", "PRO XTRA", "CASHIER", "MANAGER", "THE HOME DEPOT",
+              "HOW DOERS", "CUSTOMER", "RETURN DECLINED", "RETURN DENIED",
+              "TRANSACTION ID", "CHANGE DUE", "ITEMS SOLD")
+
+def parse_line_items(txt):
+    """Extract per-line-item detail from a register receipt, grouped by the ORIG REC
+    the item belongs to (None for a straight sale). Returns a list of
+    {sku, description, amount, orig_rec}. Amount is None when the receipt doesn't
+    print a per-item figure (e.g. some return formats)."""
+    items = []
+    cur_orig = None
+    body = re.split(r'RETURN POLICY', txt, maxsplit=1)[0]
+    for raw in body.splitlines():
+        line = raw.rstrip()
+        u = line.strip().upper()
+        if not u:
+            continue
+        om = re.search(r'ORIG REC:\s*(\d{4})\s+(\d+)\s+(\d+)\s+(\d{2}/\d{2}/\d{2})', line)
+        if om:
+            cur_orig = norm_locator(*om.groups())
+            continue
+        if any(k in u for k in _ITEM_SKIP) or re.match(r'^\s*X{4,}\d{4}', line):
+            continue
+        m = _ITEM_SKU_RE.match(line)
+        if m:
+            items.append({"sku": m.group(1), "description": re.sub(r'\s+', ' ', m.group(2)).strip(),
+                          "amount": money(m.group(3)), "orig_rec": cur_orig})
+            continue
+        m = _ITEM_RETURNED_RE.match(line)
+        if m:
+            items.append({"sku": None, "description": re.sub(r'\s+', ' ', m.group(1)).strip(),
+                          "amount": None, "orig_rec": cur_orig})
+            continue
+        m = _ITEM_TRAIL_RE.match(line)
+        if m:
+            desc = _ITEM_QTY_RE.sub('', m.group(1)).strip()
+            if len(desc) >= 3:
+                items.append({"sku": None, "description": re.sub(r'\s+', ' ', desc).strip(),
+                              "amount": money(m.group(2)), "orig_rec": cur_orig})
+    return items
+
 def parse_register_receipt(txt, fn):
     """eReceipt format."""
     rec = {"file": fn, "format": "register", "tenders": [], "orig_recs": [],
@@ -120,6 +176,7 @@ def parse_register_receipt(txt, fn):
     # HTML email bodies repeat the receipt block (responsive layouts) -> dedupe
     rec["tenders"] = _dedupe(rec["tenders"], lambda t: (t["last4"], t["type"], t["amount"]))
     rec["orig_recs"] = list(dict.fromkeys(rec["orig_recs"]))
+    rec["line_items"] = parse_line_items(txt)
     return rec
 
 def _dedupe(items, keyfn):
@@ -134,7 +191,7 @@ def parse_customer_receipt(txt, fn):
     """Customer Receipt / Special Services Invoice (H-order)."""
     rec = {"file": fn, "format": "h-order", "tenders": [], "orig_recs": [],
            "project": None, "total": None, "is_return": False,
-           "order": None, "datetime": None}
+           "order": None, "datetime": None, "line_items": []}
     om = re.search(r'H\d{4}-\d{6}', txt)
     if om:
         rec["order"] = om.group(0)

@@ -69,6 +69,31 @@ the QBO account it belongs to — fill in the `QBO_account_TO_FILL` column.
 
 ---
 
+## Returns: recover the job before you give up
+
+A return's job comes from its **original purchase**, not the return receipt (Home Depot only
+records `PO/JOB` reliably at *purchase* time — on a return it's often blank, generic, or
+wrong). Each return prints one or more `ORIG REC:` references. Before you park a return as
+"unknown job," chase the original down this ladder and stop at the first hit:
+
+1. **Your parsed receipts** — the original sale's receipt, matched by locator.
+2. **The order-history pull** — match the `ORIG REC` locator (or date + amount) to a row.
+3. **Gmail** — search your receipt inbox for the original (store + date + amount, or the
+   locator / order #) and parse it. Originals from months ago won't be in a recent
+   download — go get them rather than assuming they don't exist.
+4. **QuickBooks** — the original purchase (or the return) is very often **already booked** to
+   a job; find it by amount + date (±3 days) and reuse that job. Frequently the quickest path.
+
+Only a return that misses all four rungs goes to a human.
+
+**Book returns off line items, not just the PO/JOB.** Keep each receipt's line items (SKU,
+amount, and the `ORIG REC` each belongs to). A returned item then traces to the exact original
+purchase and its job even when the return's own job is blank — and a partial return splits
+correctly across the jobs its items came from. The PO/JOB is dependable for purchases; line
+items are what make *returns* attributable.
+
+---
+
 ## Cancellations — the hardest gap
 
 A **cancellation** is an item pulled from an order *before* fulfillment. The card is charged

@@ -20,8 +20,11 @@ receipts.json
 hd_orderhistory_full.json
 ledger.csv
 reconciliation_report.csv
+returns_needing_lookup.csv
 tender_roster.csv
+booking_log_*.csv
 Purchase_History_*.csv
+.hd-work/
 *.pdf
 *.pdf.txt
 examples/demo-output/
