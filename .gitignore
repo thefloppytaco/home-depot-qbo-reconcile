@@ -9,6 +9,11 @@ src/gmail_creds.txt
 accounts.yml
 templates/accounts.yml
 
+# Claude Code local state — .mcp.json can contain OAuth secrets if you use
+# `claude mcp add --scope project`; keep it out of public forks (docs/08)
+.mcp.json
+.claude/settings.local.json
+
 # ── Your business data — NEVER commit ──────────────────────
 downloads/
 receipts.json

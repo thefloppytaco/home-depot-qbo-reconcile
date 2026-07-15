@@ -99,6 +99,7 @@ export instead of the API pull — kept for reference (see [Two builders](#two-b
 | [docs/05-daily-receipt-log.md](docs/05-daily-receipt-log.md) | The optional daily automation into Airtable + a genericized scheduled-task template. |
 | [docs/06-runbook.md](docs/06-runbook.md) | A copy-paste recurring runbook to keep QuickBooks current. |
 | [docs/07-quickbooks-connector.md](docs/07-quickbooks-connector.md) | Posting via a QuickBooks connector/MCP: what it must support, **how to set one up** (and smoke-test it), the ledger → QBO API entity mapping, and the "For Review" limitation no connector escapes. |
+| [docs/08-claude-code.md](docs/08-claude-code.md) | Running everything in Claude Code: `/hd-setup`, `/hd-runbook`, wiring Intuit's official QuickBooks MCP server, and automating the weekly loop. |
 | [templates/](templates/) | The `accounts.example.yml` config template for your own account/project/card IDs. |
 | [ai/](ai/) | The machine-readable layer for AI agents — data dictionary, invariants, and ready-to-adapt skill templates. See [For AI agents](#for-ai-agents) below. |
 
@@ -168,6 +169,14 @@ python3 src/build_ledger.py                     #  -> ledger.csv
 
 Everything above runs from the repo root by default — inputs and outputs land next to
 `src/`, not inside it. Every script also takes `--help` if you want custom paths.
+
+### Or let Claude Code drive
+
+The repo ships first-class [Claude Code](https://code.claude.com/docs) support: clone,
+run `claude`, type **`/hd-setup`**, and it walks you through everything above — then
+`/hd-runbook` handles each weekly update, and `/qbo-poster` posts to QuickBooks through
+Intuit's official MCP server (propose-first, with guardrails). Full guide:
+**[docs/08-claude-code.md](docs/08-claude-code.md)**.
 
 ---
 

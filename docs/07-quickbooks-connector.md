@@ -44,21 +44,30 @@ Three routes, in rough order of effort:
    your company file. Directory connectors vary a lot — several, including first-party
    ones, are invoices-and-reports only — so run the smoke test below **before** trusting
    one with a posting run.
-2. **A self-hosted QuickBooks MCP server** that wraps the full QBO Accounting API. Several
-   open-source ones exist, and the API is a plain OAuth2 REST API if you'd rather build
-   your own:
-   - Create a free developer account at **developer.intuit.com** → create an app → note
-     its Client ID / Client Secret. Every new app comes with a **sandbox company** —
-     ideal for the first test run.
-   - Run the MCP server with those credentials and complete its OAuth flow against your
-     company. One QBO **company file = one connection** (one "realm"): if you run several
-     companies, set up one connector instance per company and name them unmistakably —
-     posting to the wrong company is the expensive failure mode.
+2. **Intuit's official open-source MCP server** (recommended):
+   [github.com/intuit/quickbooks-online-mcp-server](https://github.com/intuit/quickbooks-online-mcp-server).
+   It runs locally (stdio) and **passes the checklist above** — full CRUD on Purchase,
+   JournalEntry, and Deposit, plus Account/Customer/Vendor search, Attachable, and a
+   General Ledger report. Follow the setup instructions in its README:
+   - Clone + `npm install && npm run build`.
+   - Create a free app at **developer.intuit.com**, add redirect URI
+     `http://localhost:8000/callback`, and copy its Client ID / Client Secret into the
+     server's `.env`. Every new app comes with a **sandbox company** — ideal for the
+     first test run (`QUICKBOOKS_ENVIRONMENT=sandbox`).
+   - Run its OAuth flow (`npm run auth`). Production rejects localhost redirect URIs;
+     the server's README documents the ngrok workaround — after the one-time handshake,
+     the saved refresh token is all it needs.
    - Register the server with your client (Claude Desktop: Settings → Connectors → add
-     custom connector; Claude Code: `claude mcp add`; other clients: their MCP config).
-   - **Security:** this server holds write access to your books. Use code you (or someone
-     you trust) have reviewed, scope it to one company, and revoke its access from the
-     Intuit developer portal when you stop using it.
+     custom connector; Claude Code: `claude mcp add` — see
+     [08-claude-code.md](08-claude-code.md); other clients: their MCP config).
+   - One QBO **company file = one connection** (one "realm"): if you run several
+     companies, set up one server instance per company and name them unmistakably —
+     posting to the wrong company is the expensive failure mode.
+   - **Security:** any such server holds write access to your books (this is also why
+     the official one beats a random community server). Keep its `.env` out of git,
+     scope it to one company, and revoke its access from the Intuit developer portal
+     when you stop using it. Other community servers and self-built ones (the QBO API
+     is plain OAuth2 REST) work too — apply the same checklist and the same caution.
 3. **No qualifying connector.** Fall back to the read-only flow above: the agent prepares
    the posting list, you enter it in the UI.
 

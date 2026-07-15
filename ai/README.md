@@ -17,6 +17,9 @@ assume connectors (Gmail, a table store, QuickBooks) that vary by setup — adap
 calls to whatever the user has connected. For QuickBooks specifically,
 [`../docs/07-quickbooks-connector.md`](../docs/07-quickbooks-connector.md) covers how to
 set up a qualifying connector, the capability smoke test, and the QBO API entity mapping.
+In Claude Code these skills are auto-discovered via thin wrappers in `.claude/skills/`
+(see [`../docs/08-claude-code.md`](../docs/08-claude-code.md)) — edit the canonical
+versions here, not the wrappers.
 
 ## Minting a new skill from this repo
 

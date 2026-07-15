@@ -16,9 +16,11 @@ src/download_receipts.py   Gmail IMAP backfill of receipt emails → downloads/
 src/parse_receipts.py      Receipts → receipts.json + tender_roster.csv + report
 src/build_ledger.py        Spine + receipt detail → ledger.csv   (the main output)
 src/merge_ledger.py        LEGACY builder from the CSV export (no returns/cancels)
-docs/01..06                Human guides: pull, Gmail, data model, QBO playbook,
-                           daily log, runbook
+docs/01..08                Human guides: pull, Gmail, data model, QBO playbook,
+                           daily log, runbook, QuickBooks connectors, Claude Code
 ai/                        Machine-readable context + ready-to-adapt SKILL templates
+.claude/skills/            Claude Code wrappers for those skills (/hd-setup,
+                           /hd-runbook, /qbo-poster, /cancellation-sweep) + CLAUDE.md
 templates/                 accounts.example.yml — the user's private ID map (template)
 examples/                  Synthetic data only; safe to run and test against
 ```
