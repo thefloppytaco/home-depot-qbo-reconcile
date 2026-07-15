@@ -23,3 +23,8 @@ This is a thin wrapper — the canonical, client-agnostic skill lives in the rep
 Hard rules: propose the full entry list and get explicit approval before creating
 anything; never guess a project; never touch history before the cutoff; the user
 clicks Match in the QBO UI (no API can).
+
+Before flagging any unknown-project return to the user, work
+`returns_needing_lookup.csv` (Step 4 of the canonical skill): search Gmail for the
+original receipt, then QBO by amount + date (±3d) — the original is often already
+booked. Only genuinely unresolvable returns go to the human list.

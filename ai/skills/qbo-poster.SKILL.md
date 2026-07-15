@@ -15,7 +15,10 @@ This is a genericized template: fill every `<...>` from your private `accounts.y
 
 ## Inputs
 
-- `ledger.csv` (+ `receipts.json` for detail, `tender_roster.csv` for the card map)
+- `ledger.csv` (+ `receipts.json` for detail incl. per-line-item breakdown,
+  `tender_roster.csv` for the card map)
+- `returns_needing_lookup.csv` — returns whose project the offline rungs couldn't
+  resolve; the worklist for Step 4 below
 - Your account map: store-credit clearing account `<ID>`, COGS accounts `<ID>`s,
   vendor `<ID>`, card accounts `<ID>`s, job → customer/project `<ID>`s
 - **Cutoff date** `<YYYY-MM-DD>` and the **booking log** from the last run
@@ -73,17 +76,37 @@ Do this once, before Step 1 of the first-ever run (setup guide for the user:
      the actual card charge.
    - `Cancel` rows and mystery feed credits → hand to the cancellation-sweep skill.
    - (API mapping for each situation: `docs/07-quickbooks-connector.md`.)
-4. **Hold the flagged rows.** Anything with `needs_review = YES` goes to a human list
-   with the `review_reason`; never guess a project for `return-project-unknown` rows.
-5. **Propose, then post.** Present the full list of entries you intend to create
+4. **Work the return-lookup worklist.** `build_ledger.py` writes
+   `returns_needing_lookup.csv` — every return whose project the offline rungs (receipt
+   corpus + order-history spine) couldn't resolve. Before flagging any of these to a
+   human, walk the two **external** rungs for each row (columns give you `date`, `total`,
+   `tenders`, and any `orig_recs`):
+   - **Gmail** — search the receipt mailbox for the original sale (store + date + amount,
+     or the `orig_recs` locator / order #). Fetch and parse it, then inherit its job.
+     Originals from months or years back routinely sit outside the last download
+     window — go get them rather than assuming they're gone.
+   - **QBO** — the original purchase (or the return itself) is often **already booked**
+     with a project; find it by **amount + date (±3 days)** across every COGS account and
+     inherit that project. Frequently the fastest hit, so try it early.
+
+   Resolve as many as possible here and record which rung recovered each in the booking
+   log. (Full ladder: [`../context.md`](../context.md) § *Return attribution: the
+   original-receipt lookup ladder*.) The `orig_recs` locators and the receipt's
+   `line_items` are your search keys — a single returned SKU can pin the original.
+5. **Hold what's still unresolved.** Only a return that misses **every** rung — plus any
+   other `needs_review = YES` row — goes to the human list with its `review_reason`.
+   Never guess a project for a `return-project-unknown` row.
+6. **Propose, then post.** Present the full list of entries you intend to create
    (date, type, amount, project, account). **Post only after explicit approval.**
-6. **Close the loop.** Append each posted entry to the booking log (date, type,
+7. **Close the loop.** Append each posted entry to the booking log (date, type,
    amount, job, QBO entry #), flip matching daily-log rows to "Logged", and remind
    the user: when the feed lines arrive, **Match — don't Add**.
 
 ## Guardrails
 
-- No posting without approval (step 5) — this skill never auto-posts.
+- No posting without approval (step 6) — this skill never auto-posts.
+- Work `returns_needing_lookup.csv` (step 4) **before** handing any return to a human —
+  a Gmail/QBO hit is cheap and the original is often already in the books.
 - The cutoff only moves forward; history before it is read-only.
 - Card legs must equal what actually hit each card (golden rule).
 - If the account map is missing an ID (new job, new card in `tender_roster.csv`),
