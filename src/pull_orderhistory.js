@@ -64,6 +64,8 @@
   const ENDPOINT_ROOT = "https://www.homedepot.com/oms/customer/order/v1/user";
   const OUTPUT_FILENAME = "hd_orderhistory_full.json";
   const SAFETY_MAX_PAGES = 500; // hard stop so a mis-parsed total can never loop forever
+  const MAX_WINDOW_MONTHS = 24; // live API 400s on a single request spanning more than ~25 months
+  const B2B_DATE_RANGE_ERROR_CODE = "B2B_ORDER_HISTORY_ERR_8013"; // API's code for "range too wide"
 
   function logInfo(...args) { console.log(LOG_PREFIX, ...args); }
   function logWarn(...args) { console.warn(LOG_PREFIX, ...args); }
@@ -82,6 +84,49 @@
     const mm = String(d.getMonth() + 1).padStart(2, "0");
     const dd = String(d.getDate()).padStart(2, "0");
     return `${yyyy}-${mm}-${dd}`;
+  }
+
+  // -------------------------------------------------------------------------------------------
+  // Date windowing — as of mid-2026 the live API 400s (error code B2B_ORDER_HISTORY_ERR_8013,
+  // "Start date and end date...") on any single request whose startDate..endDate range is too
+  // wide; ranges of ~24-25 months succeed (the site's own UI itself uses "Last 25 Months"). So
+  // instead of one request spanning the whole START_DATE..END_DATE range, we split it into a
+  // series of <=24-month windows and pull each one separately, paginating within each window as
+  // before. A page-1 400 on an individual window is also used as a signal that the window
+  // predates the account's available order history (see runPull() and STEP 2 below). See also
+  // docs/01-pull-order-history.md.
+  // -------------------------------------------------------------------------------------------
+
+  function addMonthsISO(dateStr, months) {
+    const [y, m, d] = dateStr.split("-").map(Number);
+    const date = new Date(Date.UTC(y, m - 1, d));
+    date.setUTCMonth(date.getUTCMonth() + months);
+    return `${date.getUTCFullYear()}-${String(date.getUTCMonth() + 1).padStart(2, "0")}-` +
+      `${String(date.getUTCDate()).padStart(2, "0")}`;
+  }
+
+  function addDaysISO(dateStr, days) {
+    const [y, m, d] = dateStr.split("-").map(Number);
+    const date = new Date(Date.UTC(y, m - 1, d));
+    date.setUTCDate(date.getUTCDate() + days);
+    return `${date.getUTCFullYear()}-${String(date.getUTCMonth() + 1).padStart(2, "0")}-` +
+      `${String(date.getUTCDate()).padStart(2, "0")}`;
+  }
+
+  /** Splits [startDate, endDate] (inclusive, "YYYY-MM-DD") into contiguous, non-overlapping
+   *  windows of at most maxMonths months each, oldest window first. The live API rejects any
+   *  single request spanning more than ~25 months, so every window generated here must fit
+   *  under that ceiling. */
+  function generateDateWindows(startDate, endDate, maxMonths) {
+    const windows = [];
+    let winStart = startDate;
+    while (winStart <= endDate) {
+      const uncappedEnd = addDaysISO(addMonthsISO(winStart, maxMonths), -1);
+      const winEnd = uncappedEnd > endDate ? endDate : uncappedEnd;
+      windows.push({ startDate: winStart, endDate: winEnd });
+      winStart = addDaysISO(winEnd, 1);
+    }
+    return windows;
   }
 
   // Sanity check — this only works from a homedepot.com tab (it relies on your session
@@ -118,17 +163,46 @@
     }
   }
 
+  /** Normalizes a Headers instance, plain object, or array-of-pairs into a plain
+   *  { name: value } object. Returns null if nothing usable was found. */
+  function headersToObject(h) {
+    if (!h) return null;
+    try {
+      if (typeof Headers !== "undefined" && h instanceof Headers) {
+        const obj = {};
+        for (const [k, v] of h.entries()) obj[k] = v;
+        return Object.keys(obj).length ? obj : null;
+      }
+      if (Array.isArray(h)) {
+        const obj = {};
+        for (const [k, v] of h) obj[k] = v;
+        return Object.keys(obj).length ? obj : null;
+      }
+      if (typeof h === "object") {
+        return Object.keys(h).length ? { ...h } : null;
+      }
+    } catch (e) {
+      /* ignore — fall through to null */
+    }
+    return null;
+  }
+
   /** Watches window.fetch and XMLHttpRequest for a request whose URL matches /orderhistory
-   *  and pulls USER_ID out of the URL + customerAccountId out of the JSON body. Resolves once
-   *  it has both, having restored the original fetch/XHR first. */
+   *  and pulls USER_ID out of the URL, customerAccountId out of the JSON body, and the full
+   *  set of request headers the live page sent (including things like TMXProfileID and
+   *  freshly-generated tracing headers that aren't in our hard-coded fallback set — see
+   *  buildHeaders() below). Resolves once it has both IDs, having restored the original
+   *  fetch/XHR/setRequestHeader first. */
   function autoCaptureIds(alreadyHave) {
     return new Promise((resolve) => {
       const originalFetch = window.fetch;
       const originalOpen = XMLHttpRequest.prototype.open;
       const originalSend = XMLHttpRequest.prototype.send;
+      const originalSetRequestHeader = XMLHttpRequest.prototype.setRequestHeader;
       const captured = {
         userId: alreadyHave.userId || null,
         customerAccountId: alreadyHave.customerAccountId || null,
+        headers: alreadyHave.headers || null,
       };
       let done = false;
       let reminder = null;
@@ -139,17 +213,20 @@
         window.fetch = originalFetch;
         XMLHttpRequest.prototype.open = originalOpen;
         XMLHttpRequest.prototype.send = originalSend;
+        XMLHttpRequest.prototype.setRequestHeader = originalSetRequestHeader;
         if (reminder) clearInterval(reminder);
         logBanner("IDs captured — restoring normal fetch/XHR and starting the pull.", "#0a7d1e");
         resolve(captured);
       }
 
-      function observe(url, bodyText) {
+      function observe(url, bodyText, headers) {
         if (!looksLikeOrderHistoryUrl(url)) return;
         const uid = extractUserIdFromUrl(url);
         if (uid) captured.userId = uid;
         const cid = extractCustomerAccountId(bodyText);
         if (cid) captured.customerAccountId = cid;
+        const h = headersToObject(headers);
+        if (h) captured.headers = h;
         tryResolve();
       }
 
@@ -157,14 +234,17 @@
         try {
           const url = typeof input === "string" ? input : input && input.url;
           if (looksLikeOrderHistoryUrl(url)) {
+            const headers = (init && init.headers) || (input && input.headers) || null;
             if (init && typeof init.body === "string") {
-              observe(url, init.body);
+              observe(url, init.body, headers);
             } else if (input && typeof input.clone === "function") {
               // Body may live on a Request object instead of `init` — read a clone so we
               // don't consume the body the page itself is about to send.
-              input.clone().text().then((text) => observe(url, text)).catch(() => observe(url, null));
+              input.clone().text()
+                .then((text) => observe(url, text, headers))
+                .catch(() => observe(url, null, headers));
             } else {
-              observe(url, null);
+              observe(url, null, headers);
             }
           }
         } catch (e) {
@@ -175,13 +255,23 @@
 
       XMLHttpRequest.prototype.open = function (method, url, ...rest) {
         this.__pull_orderhistory_url = url;
+        this.__pull_orderhistory_headers = {};
         return originalOpen.call(this, method, url, ...rest);
+      };
+      XMLHttpRequest.prototype.setRequestHeader = function (name, value) {
+        try {
+          if (!this.__pull_orderhistory_headers) this.__pull_orderhistory_headers = {};
+          this.__pull_orderhistory_headers[name] = value;
+        } catch (e) {
+          /* never let capture logic break the page */
+        }
+        return originalSetRequestHeader.apply(this, arguments);
       };
       XMLHttpRequest.prototype.send = function (body) {
         try {
           const url = this.__pull_orderhistory_url;
           if (looksLikeOrderHistoryUrl(url)) {
-            observe(url, typeof body === "string" ? body : null);
+            observe(url, typeof body === "string" ? body : null, this.__pull_orderhistory_headers);
           }
         } catch (e) {
           /* never let capture logic break the page */
@@ -205,7 +295,16 @@
   // STEP 2 — the pull itself.
   // =================================================================================================
 
-  function buildHeaders() {
+  /** Builds the header set for a page request. If AUTO-CAPTURE grabbed the full header set
+   *  from a live orderhistory request earlier in this page load (see autoCaptureIds() above),
+   *  that captured set — including things like TMXProfileID and freshly-generated tracing
+   *  headers — is reused as-is; live replay of that fresh, complete set has worked fine. In
+   *  manual-ID mode (USER_ID/CUSTOMER_ACCOUNT_ID filled in by hand, so nothing was captured)
+   *  we fall back to this hard-coded base set instead. */
+  function buildHeaders(capturedHeaders) {
+    if (capturedHeaders && Object.keys(capturedHeaders).length > 0) {
+      return { ...capturedHeaders };
+    }
     return {
       "Accept": "application/json, text/plain, */*",
       "Content-Type": "application/json",
@@ -213,8 +312,11 @@
       "Client": "ocm_pd_experience_customer-account-orders-purchases",
       "channel": "desktop",
       "X-Client-App": "PHX-Desktop",
-      // Deliberately NOT sending newrelic / traceparent / X-B3-* headers here — replaying
-      // stale tracing headers copied from a captured request causes the API to 400. See
+      // Fallback set only (manual-ID mode, nothing was auto-captured). Deliberately NOT
+      // sending newrelic / traceparent / X-B3-* / TMXProfileID headers here — replaying STALE
+      // tracing headers copied by hand from an old captured request causes the API to 400.
+      // A FRESH captured set (see above) is fine and is preferred whenever it's available;
+      // this fallback is what we send when there's nothing to capture from. See
       // docs/01-pull-order-history.md.
     };
   }
@@ -240,12 +342,12 @@
   /** POSTs one page. Retries once on a network-level failure (e.g. a dropped connection);
    *  does NOT retry on HTTP error responses — those are reported immediately with a clear,
    *  specific message instead. */
-  async function fetchPage(userId, customerAccountId, pageNumber, startDate, endDate) {
+  async function fetchPage(userId, customerAccountId, pageNumber, startDate, endDate, capturedHeaders) {
     const url = `${ENDPOINT_ROOT}/${encodeURIComponent(userId)}/orderhistory`;
     const doFetch = () =>
       fetch(url, {
         method: "POST",
-        headers: buildHeaders(),
+        headers: buildHeaders(capturedHeaders),
         credentials: "include",
         body: buildBody(pageNumber, startDate, endDate, customerAccountId),
       });
@@ -283,7 +385,12 @@
     }
 
     if (!res.ok) {
-      throw new Error(`page ${pageNumber} got HTTP ${res.status} ${res.statusText}: ${text.slice(0, 300)}`);
+      // Attach the HTTP status so callers (see runPull's window loop) can tell a page-1 400 —
+      // possibly B2B_ORDER_HISTORY_ERR_8013, meaning this date window is too wide or predates
+      // the account's available history — apart from a genuine mid-window failure.
+      const err = new Error(`page ${pageNumber} got HTTP ${res.status} ${res.statusText}: ${text.slice(0, 300)}`);
+      err.httpStatus = res.status;
+      throw err;
     }
 
     try {
@@ -409,51 +516,100 @@
   // Orchestration.
   // =================================================================================================
 
-  async function runPull(userId, customerAccountId) {
-    const startDate = START_DATE;
-    const endDate = END_DATE || todayISO();
-
-    logInfo(`starting pull — USER_ID=${userId}  CUSTOMER_ACCOUNT_ID=${customerAccountId}`);
-    logInfo(`date range ${startDate} .. ${endDate}`);
-
-    const rawOrders = [];
+  /** Pulls every page of a single date window. Returns { orders, skipped, reason }.
+   *  A page-1 HTTP 400 is treated as "this window predates the account's available history" —
+   *  it's reported back as skipped rather than thrown, so the caller can move on to the next
+   *  window. A 400 on any later page is still a real error and propagates normally. */
+  async function fetchWindow(userId, customerAccountId, win, capturedHeaders) {
     let reportedTotal = null;
     let pageNumber = 1;
+    const orders = [];
 
     while (pageNumber <= SAFETY_MAX_PAGES) {
-      logInfo(`fetching page ${pageNumber}…`);
-      const json = await fetchPage(userId, customerAccountId, pageNumber, startDate, endDate);
+      logInfo(`window ${win.startDate} .. ${win.endDate}: fetching page ${pageNumber}…`);
+
+      let json;
+      try {
+        json = await fetchPage(userId, customerAccountId, pageNumber, win.startDate, win.endDate, capturedHeaders);
+      } catch (err) {
+        if (pageNumber === 1 && err && err.httpStatus === 400) {
+          const reason = `HTTP 400 on page 1 (likely ${B2B_DATE_RANGE_ERROR_CODE} — "Start date and ` +
+            `end date...") — this window likely predates the account's available order history`;
+          logWarn(`window ${win.startDate} .. ${win.endDate}: ${reason}. Skipping and continuing.`);
+          return { orders, pagesFetched: 0, skipped: true, reason };
+        }
+        throw err; // a 400 on a later page, or any other error, is a real failure — don't swallow it
+      }
 
       if (reportedTotal === null) {
         reportedTotal = findReportedTotal(json);
-        if (reportedTotal !== null) logInfo(`API reports ${reportedTotal} total orders.`);
+        if (reportedTotal !== null) {
+          logInfo(`window ${win.startDate} .. ${win.endDate}: API reports ${reportedTotal} total orders.`);
+        }
       }
 
       const { orders: pageOrders, path } = locateOrdersArray(json);
       logInfo(
-        `page ${pageNumber}: ${pageOrders.length} orders (found at "${path ?? "?"}"). ` +
-        `${rawOrders.length + pageOrders.length} collected so far.`
+        `window ${win.startDate} .. ${win.endDate}: page ${pageNumber}: ${pageOrders.length} orders ` +
+        `(found at "${path ?? "?"}"). ${orders.length + pageOrders.length} collected in this window so far.`
       );
 
       if (pageOrders.length === 0) {
-        logInfo(`page ${pageNumber} returned 0 orders — done.`);
-        break;
+        logInfo(`window ${win.startDate} .. ${win.endDate}: page ${pageNumber} returned 0 orders — window done.`);
+        return { orders, pagesFetched: pageNumber, skipped: false };
       }
-      rawOrders.push(...pageOrders);
+      orders.push(...pageOrders);
 
-      if (reportedTotal !== null && rawOrders.length >= reportedTotal) {
-        logInfo(`collected ${rawOrders.length} >= reported total ${reportedTotal} — done.`);
-        break;
+      if (reportedTotal !== null && orders.length >= reportedTotal) {
+        logInfo(
+          `window ${win.startDate} .. ${win.endDate}: collected ${orders.length} >= reported total ` +
+          `${reportedTotal} — window done.`
+        );
+        return { orders, pagesFetched: pageNumber, skipped: false };
       }
 
       pageNumber += 1;
       await sleep(PAGE_DELAY_MS);
     }
-    if (pageNumber > SAFETY_MAX_PAGES) {
-      logWarn(
-        `hit the safety cap of ${SAFETY_MAX_PAGES} pages — stopping anyway. If you really have ` +
-        `more than ~${SAFETY_MAX_PAGES * 495} orders, raise SAFETY_MAX_PAGES near the top of this file.`
-      );
+
+    logWarn(
+      `window ${win.startDate} .. ${win.endDate}: hit the safety cap of ${SAFETY_MAX_PAGES} pages — ` +
+      `stopping this window anyway. If you really have more than ~${SAFETY_MAX_PAGES * 495} orders in ` +
+      `one window, raise SAFETY_MAX_PAGES near the top of this file.`
+    );
+    return { orders, pagesFetched: SAFETY_MAX_PAGES, skipped: false };
+  }
+
+  async function runPull(userId, customerAccountId, capturedHeaders) {
+    const startDate = START_DATE;
+    const endDate = END_DATE || todayISO();
+    // Newest-first: if a run is interrupted, the most useful (most recent) data is already
+    // downloaded. Windows older than the account's history simply get skipped as we go.
+    const windows = generateDateWindows(startDate, endDate, MAX_WINDOW_MONTHS).reverse();
+
+    logInfo(`starting pull — USER_ID=${userId}  CUSTOMER_ACCOUNT_ID=${customerAccountId}`);
+    logInfo(
+      `overall date range ${startDate} .. ${endDate}, split into ${windows.length} window(s) of up ` +
+      `to ${MAX_WINDOW_MONTHS} months each (the live API 400s on wider single-request ranges).`
+    );
+
+    const rawOrders = [];
+    const skippedWindows = [];
+    let totalPagesFetched = 0;
+
+    for (const win of windows) {
+      logInfo(`window ${win.startDate} .. ${win.endDate}: starting…`);
+      const result = await fetchWindow(userId, customerAccountId, win, capturedHeaders);
+      totalPagesFetched += result.pagesFetched;
+
+      if (result.skipped) {
+        skippedWindows.push({ startDate: win.startDate, endDate: win.endDate, reason: result.reason });
+      } else {
+        rawOrders.push(...result.orders);
+        logInfo(`window ${win.startDate} .. ${win.endDate}: done — orderCount=${result.orders.length}.`);
+      }
+
+      await sleep(PAGE_DELAY_MS);
     }
 
     const rows = dedupeRows(rawOrders.map(mapOrder));
@@ -464,11 +620,17 @@
 
     logBanner("done.", "#0a7d1e");
     console.table([
-      { metric: "pages fetched", value: pageNumber },
+      { metric: "windows fetched", value: windows.length },
+      { metric: "windows skipped (predate available history)", value: skippedWindows.length },
+      { metric: "pages fetched", value: totalPagesFetched },
       { metric: "raw orders pulled", value: rawOrders.length },
       { metric: "duplicates removed", value: dupes },
       { metric: "unique rows", value: rows.length },
       ...Object.keys(byType).sort().map((type) => ({ metric: `type: ${type}`, value: byType[type] })),
+      ...skippedWindows.map((w) => ({
+        metric: `skipped window: ${w.startDate} .. ${w.endDate}`,
+        value: w.reason,
+      })),
     ]);
 
     const result = { pulled: rows.length, rows };
@@ -488,12 +650,14 @@
   try {
     let userId = USER_ID;
     let customerAccountId = CUSTOMER_ACCOUNT_ID;
+    let capturedHeaders = null;
     if (!userId || !customerAccountId) {
       const captured = await autoCaptureIds({ userId, customerAccountId });
       userId = captured.userId;
       customerAccountId = captured.customerAccountId;
+      capturedHeaders = captured.headers || null;
     }
-    await runPull(userId, customerAccountId);
+    await runPull(userId, customerAccountId, capturedHeaders);
   } catch (err) {
     logError("pull failed — no file was downloaded.");
     logError((err && err.message) || err);

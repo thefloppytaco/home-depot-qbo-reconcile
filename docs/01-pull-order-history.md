@@ -89,6 +89,15 @@ causes a 400. They aren't required.
   Run it from the DevTools **Console**, or drive it with a browser-automation tool. A plain
   server-side `fetch` won't carry the session and will fail.
 
+> **Date-range limit (live-API behavior, mid-2026):** a request whose `startDate`..`endDate`
+> range is too wide now returns HTTP 400 with error code `B2B_ORDER_HISTORY_ERR_8013` ("Start
+> date and end date..."). Ranges of ~24-25 months succeed (the site's own UI uses "Last 25
+> Months"). `src/pull_orderhistory.js` now pulls in ≤24-month windows automatically, and treats
+> a page-1 400 on any individual window as "this window predates the account's available
+> history" — it logs that, skips the window, and continues with the rest. If you're driving the
+> endpoint by hand instead of using the script, chunk your own requests into ≤24-month windows
+> the same way.
+
 ## Response shape (per order)
 
 ```
