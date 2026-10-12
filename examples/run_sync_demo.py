@@ -65,7 +65,7 @@ def main():
         print(f.read())
 
     print('=== 5. (simulated) you approve, your AI posts each payload and records the ids QuickBooks returns ===')
-    ids = 'P1=9101,P2=9102,P3=9103,S1=9104,J1=9105,C1=9106'
+    ids = 'P1=9101,P2=9102,P3=9103,S1=9104,J1=9105,C1=9106,C2=9107,C3=9108'
     run([os.path.join(SRC, 'closeout.py'), '--sync', SYNC, '--ids', ids, '--write'])
 
     print('\n=== 6. audit one job end to end ===')
@@ -79,6 +79,10 @@ def main():
           '  - The 10/07 purchase on the client\'s card (..9999) is itemized but NOT posted (X1).\n'
           '  - The 10/10 Pro Desk order has no register receipt; its PO comes from the order PDF, and its delivery fee is\n'
           '    derived from the receipt pretax (flagged CHECK).\n'
+          '  - The 10/11 register return covered an in-store purchase AND an online order. Home Depot lists it twice: the\n'
+          '    whole receipt (84.76) and an order-return row repeating the online part (31.76). Only the whole receipt is\n'
+          '    booked (C2); the repeat is a sub-row, and its order number is how the online item finds its job.\n'
+          '  - The 10/12 online-order return printed no tax line for its block; the tax is derived from the receipt total.\n'
           '  - The 10/02 row was already booked last week, so it is matched, not new. The Cancel row gets bucket "cancel".\n')
 
 

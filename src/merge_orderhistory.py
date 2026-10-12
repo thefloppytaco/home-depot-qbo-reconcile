@@ -171,16 +171,23 @@ def main(argv=None):
     json.load(open(a.spine))
     print(f'{a.spine}: {len(stored)} rows')
 
-    agg = {}
+    # sub-rows: tender-less rows of a batch return (same date/store/transaction as the row with tenders), and rows that
+    # repeat part of another row's receipt (an order-return row beside the register row). The biggest row is the receipt.
+    agg, big = {}, {}
     for row, _ in inc:
         if row['tenders']:
             agg.setdefault((row['date'], row['store'], row['tx']), row['receipt'])
+            k = (row['date'], row['receipt'])
+            if row['receipt'] and (k not in big or abs(row['total']) > abs(big[k]['total'])):
+                big[k] = row
     cols = 'n,date,type,store,receipt,tx,order,po_online,total,pretax,tenders,nick,invoices,subrow_of,late,bucket,entry_key,qbo_id,notes'.split(',')
     with open(os.path.join(S, 'new_rows.csv'), 'w', newline='') as fh:
         w = csv.writer(fh)
         w.writerow(cols)
         for n, (row, nick) in enumerate(sorted(new, key=lambda x: (x[0]['date'], x[0]['receipt'])), 1):
             sub = '' if row['tenders'] else agg.get((row['date'], row['store'], row['tx']), '')
+            if row['tenders'] and big.get((row['date'], row['receipt'])) is not None and big[(row['date'], row['receipt'])] is not row:
+                sub = row['receipt']
             w.writerow([n, row['date'], row['type'], row['store'], row['receipt'], row['tx'], row.get('order', ''), row['job'], row['total'],
                         row['pretax'], ';'.join(f"{t['net']}..{t['last4']}={t['amt']}" for t in row['tenders']), nick,
                         ';'.join(map(str, row['invoices'])), sub, 'Y' if row['date'] < late else '', '', '', '', ''])

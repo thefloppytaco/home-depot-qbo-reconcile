@@ -26,7 +26,7 @@ an original it cannot find, a receipt whose items don't tie, order details answe
 several refund legs on one return, a card charge that differs from the receipt total.
 Stdlib only.
 """
-import json, csv, glob, os, re, sys, argparse, collections, datetime as dt
+import json, csv, glob, os, re, sys, argparse, collections, itertools, datetime as dt
 
 HERE = os.path.dirname(os.path.abspath(__file__))
 sys.path.insert(0, HERE)
@@ -64,7 +64,7 @@ def rowkey_csv(r): return r.get('receipt') or f"order:{r.get('order') or ''}"
 
 
 class Gen:
-    def __init__(self, config, ledger_rows, line_items, logs):
+    def __init__(self, config, ledger_rows, line_items, logs, orders=None):
         self.c = config
         self.jobs = config['jobs']
         self.alias = {norm(k): v for k, v in config.get('po_aliases', {}).items()}
@@ -74,12 +74,14 @@ class Gen:
         for j in self.jobs:
             self.jobkey[key2(j)].append(j)
         self.ledger = ledger_rows
-        self.led_by = {}
+        self.led_by, self.led_st = {}, collections.defaultdict(list)
         for r in ledger_rows:
             try:
                 self.led_by[(str(int(r['store'])), r['date'], int(r['transaction_id']))] = r
+                self.led_st[(str(int(r['store'])), int(r['transaction_id']))].append(r)
             except (KeyError, ValueError, TypeError):
                 pass
+        self.orders = orders or {}   # order number -> (date, receipt locator), from hd_orderhistory_full.json when it has them
         self.li_by = collections.defaultdict(list)
         for r in line_items:
             self.li_by[(r.get('date'), r.get('receipt_locator'))].append(r)
@@ -126,7 +128,59 @@ class Gen:
         iso = f'20{y}-{m}-{d}'
         loc = f'{reg.zfill(5)}-{txn.zfill(5)}'
         row = self.led_by.get((str(int(store)), iso, int(txn) // 10)) or self.led_by.get((str(int(store)), iso, int(txn)))
+        if not row:   # online / Pro Desk originals: the printed date can be a day or two off the order-history date
+            d0 = dt.date.fromisoformat(iso)
+            near = [r for t in (int(txn) // 10, int(txn)) for r in self.led_st.get((str(int(store)), t), [])
+                    if not str(r.get('type', '')).lower().startswith(('return', 'cancel')) and abs((dt.date.fromisoformat(r['date']) - d0).days) <= 3]
+            if len(near) == 1:
+                row = near[0]
         return row, loc
+
+    @staticmethod
+    def link_shadows(bundles):
+        """Home Depot sometimes lists ONE receipt as two rows with tenders: the register row (the whole printed receipt)
+        and an order-return row for the part that came from an online / Pro Desk order. The order-return row is a subset -
+        booking both would double-count it. The biggest row on a receipt is the receipt; the others are its shadows.
+        Returns {id(shadow): aggregate} and records each aggregate's shadows as b['_shadows'] = [(amount, order), ...]
+        (an order-return shadow tells the aggregate which order a block's original came from)."""
+        shadow, by_rcpt = {}, collections.defaultdict(list)
+        for b in bundles:
+            if b.get('tn'):
+                by_rcpt[(b['d'], rowkey(b))].append(b)
+        for grp in by_rcpt.values():
+            if len(grp) > 1:
+                agg = max(grp, key=lambda x: (abs(float(x.get('tot') or 0)), not x.get('on')))
+                agg['_shadows'] = [(round(abs(float(x.get('tot') or 0)), 2), x.get('on') or '') for x in grp if x is not agg]
+                for x in grp:
+                    if x is not agg:
+                        shadow[id(x)] = agg
+        return shadow
+
+    def find_by_order(self, order):
+        """The original SALE of an online / Pro Desk order, by order number (ledger.csv 'invoices' holds it)."""
+        if not order:
+            return None
+        hits = [r for r in self.ledger if order in (r.get('invoices') or '') and not str(r.get('type', '')).lower().startswith(('return', 'cancel'))]
+        if not hits and order in self.orders:
+            d, rc = self.orders[order]
+            hits = [r for r in self.ledger if r.get('date') == d and r.get('receipt_locator') == rc]
+        return sorted(hits, key=lambda r: r.get('date', ''))[0] if hits else None
+
+    @staticmethod
+    def partition(legs, gtot):
+        """The unique way to give every group to one refund leg so each leg's groups add up to that leg, or None."""
+        if len(gtot) > 10 or len(legs) > 4:
+            return None
+        found = []
+        for assign in itertools.product(range(len(legs)), repeat=len(gtot)):
+            sums = [0.0] * len(legs)
+            for gi, li in enumerate(assign):
+                sums[li] += gtot[gi]
+            if all(abs(round(sums[k], 2) - abs(legs[k][2])) < 0.005 for k in range(len(legs))):
+                found.append(assign)
+                if len(found) > 1:
+                    return None
+        return found[0] if found else None
 
     def booked_job(self, iso, locs):
         """The job + QBO id an original was BOOKED to: line_items.csv first, then booking logs."""
@@ -184,42 +238,62 @@ class Gen:
     def return_groups(self, b, od, rc, items, tax, po, job):
         groups = []
         blocks = rc.get('blocks') or []
+        # A block's own SALES TAX line is sometimes missing from the printed receipt (one-block receipts usually print
+        # tax only after SUBTOTAL). Spread whatever tax the receipt has left over the blocks without one, by amount.
+        rtax = round(abs(float(b['tot'] or 0)) - abs(float(b['pre'] or 0)), 2)
+        known = round(sum(abs(k['tax']) for k in blocks if k.get('tax') is not None), 2)
+        bare = [k for k in blocks if k.get('tax') is None]
+        bare_amt = round(sum(abs(i['total']) for k in bare for i in k['items']), 2)
+        left, derived = round(rtax - known, 2), {}
+        for n, k in enumerate(bare):
+            amt = round(sum(abs(i['total']) for i in k['items']), 2)
+            derived[id(k)] = round(left - sum(derived.values()), 2) if n == len(bare) - 1 else (round(left * amt / bare_amt, 2) if bare_amt else 0.0)
         if blocks:
             for blk in blocks:
-                gtax = abs(blk['tax']) if blk.get('tax') is not None else round(sum(abs(i['total']) for i in blk['items']) * 0.06, 2)
+                gtax = abs(blk['tax']) if blk.get('tax') is not None else derived[id(blk)]
+                taxnote = '' if blk.get('tax') is not None else f'; CHECK: no tax line printed for this block - {gtax:.2f} derived from the receipt total'
                 gitems = [(i['desc'], i['qty'], abs(i['unit']), abs(i['total'])) for i in blk['items']]
                 for k, gi in enumerate(gitems):   # better names from order details when one item matches by amount
                     m = [x for x in od.get('items', []) if x.get('pretax') is not None and abs(abs(x['pretax']) - gi[3]) < 0.005 and (x.get('qty') or 1) == gi[1]]
                     if len(m) == 1:
                         gitems[k] = (f"{m[0]['desc']} [sku {m[0].get('sku')}]", gi[1], gi[2], gi[3])
                 if blk['ref'] is None:
-                    groups.append(('untagged (NO RECEIPT)', None, 'ORIG REC: NO RECEIPT', '', gitems, gtax, 'no-receipt return -> cogs, no job'))
+                    groups.append(('untagged (NO RECEIPT)', None, 'ORIG REC: NO RECEIPT', '', gitems, gtax, 'no-receipt return -> cogs, no job' + taxnote))
                     continue
                 orig, oloc = self.find_original(blk['ref'])
                 label = f"ORIG REC {' '.join(blk['ref'])}"
+                if not orig:   # online / Pro Desk originals carry the order's own numbering: try the order number
+                    gamt = round(sum(i[3] for i in gitems) + gtax, 2)
+                    cand = [b['on']] if b.get('on') else [o for a, o in b.get('_shadows', []) if o and abs(a - gamt) < 0.015]
+                    for on in cand:
+                        orig = self.find_by_order(on)
+                        if orig:
+                            oloc = orig.get('receipt_locator') or oloc
+                            label += f' (order {on})'
+                            break
                 if not orig:
                     groups.append(('REVIEW', None, label, '', gitems, gtax, 'REVIEW: original not in ledger.csv (older than the pull, an unlinked card, '
-                                   'or desk-order numbering) - find it (Gmail, QuickBooks by amount + date) or ask'))
+                                   'or desk-order numbering) - find it (Gmail, QuickBooks by amount + date) or ask' + taxnote))
                     continue
                 if self.excluded_origin(orig.get('tenders')):
                     mode = self.c.get('excluded_origin_refunds', 'ask')
                     if mode == 'untagged':
-                        groups.append(('untagged (excluded-card origin)', None, label, '', gitems, gtax, 'original was paid on an excluded card; refunded to you -> untagged (config)'))
+                        groups.append(('untagged (excluded-card origin)', None, label, '', gitems, gtax, 'original was paid on an excluded card; refunded to you -> untagged (config)' + taxnote))
                     else:
                         groups.append(('REVIEW', None, label, '', gitems, gtax, f"REVIEW: original was paid on an excluded card ({orig.get('tenders')}) but refunded to "
-                                       'your card/store credit - ask the owner where it goes'))
+                                       'your card/store credit - ask the owner where it goes' + taxnote))
                     continue
                 ojob, oid, src = self.booked_job(orig['date'], [oloc, orig.get('receipt_locator', '')])
                 if ojob:
                     cj, cf = self.resolve_job(ojob)
                     groups.append((cj or ojob, None, label, f'#{oid}' if oid and not oid.startswith('#') else oid, gitems, gtax,
-                                   f"original {orig['date']} {oloc} booked to {ojob} ({src})" + (f'; {cf}' if cf else '')))
+                                   f"original {orig['date']} {oloc} booked to {ojob} ({src})" + (f'; {cf}' if cf else '') + taxnote))
                 else:
                     cj, cf = self.resolve_job(orig.get('project', ''))
                     groups.append((cj or 'REVIEW', None, label, '', gitems, gtax,
                                    f"{'CHECK' if cj else 'REVIEW'}: original {orig['date']} {oloc} has no booking on file; Home Depot's PO on it is "
                                    f"{orig.get('project')!r}{' -> ' + cj if cj else ''}. Confirm in QuickBooks (amount {abs(float(orig['total'])):.2f}, "
-                                   f"date +-3 days) which job its entry is on"))
+                                   f"date +-3 days) which job its entry is on" + taxnote))
             return groups
         rel = od.get('related') or ''
         if rel:
@@ -232,6 +306,12 @@ class Gen:
                                f"single-origin return of {orig['date']} {orig.get('receipt_locator')} ({src or 'HD PO ' + repr(orig.get('project'))})"))
             else:
                 groups.append(('REVIEW', None, f'related txn {rel}', '', items, tax, 'REVIEW: original not in ledger.csv'))
+        elif b.get('on') and self.find_by_order(b['on']):
+            orig = self.find_by_order(b['on'])
+            ojob, oid, src = self.booked_job(orig['date'], [orig.get('receipt_locator', '')])
+            cj, cf = self.resolve_job(ojob or orig.get('project', ''))
+            groups.append((cj or 'REVIEW', None, f"order {b['on']}", f'#{oid}' if oid else '', items, tax,
+                           f"{'' if cj else 'REVIEW: '}return of order {b['on']}, sold {orig['date']} ({src or 'HD PO ' + repr(orig.get('project'))})"))
         elif b.get('on'):
             groups.append(('REVIEW', None, f"order {b['on']}", '', items, tax, f"REVIEW: return of order {b['on']} - find that order's sale and the job it was "
                            f"booked to; this return row's PO {po!r} is NOT evidence"))
@@ -239,7 +319,9 @@ class Gen:
             groups.append((job or 'REVIEW', None, 'single receipt, no ORIG REC', '', items, tax, 'single-job return booked off its own printed PO'))
         return groups
 
-    def run(self, bundles):
+    def run(self, bundles, only=None):
+        """bundles: every bundle in the file. only: optional set of (date, rowkey, abs total) to draft (from new_rows.csv);
+        the rest are still used to recognize rows that repeat part of another row's receipt."""
         out = ['# entries.py - DRAFT written by src/gen_entries.py on ' + dt.date.today().isoformat(),
                "# Resolve every '# REVIEW' line (fix the add() call, change it to skip(), or delete it), glance at '# CHECK' lines, then run:",
                '#     python3 entries.py',
@@ -265,11 +347,26 @@ class Gen:
         def q(s): return repr(str(s))
         def it(d, qy, u, t): return f'({q(d)}, {qy}, {u:.2f}, {t:.2f})'
 
+        shadow = self.link_shadows(bundles)
+
         for b in sorted(bundles, key=lambda x: (x['d'], x.get('i', 0))):
+            if only is not None and (b['d'], rowkey(b), round(abs(float(b.get('tot') or 0)), 2)) not in only:
+                continue
             loc = rowkey(b)
             loc_now[0] = loc
             flags = []
             tn = b.get('tn') or []
+            if id(b) in shadow:
+                agg = shadow[id(b)]
+                counters['sub-row'] += 1
+                note = (f"# {b['d']} {loc} {b['tot']} order {b.get('on')!r}: repeats part of receipt {loc} (whole receipt {agg['tot']}, tenders {agg.get('tn')}) "
+                        f"- bucket 'sub-row', no entry; its items book inside that receipt's entry")
+                aleg = {(t[0], t[1]): abs(float(t[2] or 0)) for t in agg.get('tn') or []}
+                same = all(aleg.get((t[0], t[1]), -1) + 0.005 >= abs(float(t[2] or 0)) for t in b.get('tn') or [])
+                out += [note] + ([] if same else [f"#   CHECK: this row says the refund went {b.get('tn')}; the whole-receipt row says {agg.get('tn')}. "
+                                                    'The whole-receipt row matches the printed receipt - confirm against the card feed']) + ['']
+                rep.append(f"{b['d']} {loc} {b['tot']}: sub-row (repeats part of the {agg['tot']} receipt)")
+                continue
             if b.get('err'):
                 flags.append(f"REVIEW: the fetch failed for this row ({b['err']}) - re-run src/fetch_receipts.js for its date")
             if str(b['t']).lower().startswith('cancel'):
@@ -290,7 +387,10 @@ class Gen:
                 flags.append(f"REVIEW: no order details ({b.get('od_err')}) - items come from the receipt text only")
             elif od.get('head') and [str(x).lstrip('0') for x in (od['head'][0], od['head'][2], str(od['head'][3])[:10])] != \
                     [str(x).lstrip('0') for x in (b['s'], b['txc'], b['d'])]:
-                flags.append(f"REVIEW: order details answered for a DIFFERENT transaction {od['head']} (a related sale/return) - items below come from the printed receipt; verify")
+                if b.get('on') and is_ret:   # normal for an online / Pro Desk order returned at a register: details describe the order
+                    out.append(f"#   (order details describe order {b['on']} itself, not this return - items come from the printed receipt)")
+                else:
+                    flags.append(f"REVIEW: order details answered for a DIFFERENT transaction {od['head']} (a related sale/return) - items below come from the printed receipt; verify")
                 od = {}
             if not rc and not big:
                 flags.append(f"REVIEW: no printed receipt ({b.get('rc_err')}) - today's receipts can lag hours; HOLD until it appears")
@@ -300,10 +400,16 @@ class Gen:
             po_src = 'printed' if printed else 'online'
             if printed and online and norm(printed) != norm(online) and key2(printed) != key2(online):
                 flags.append(f"CHECK: printed PO {printed!r} vs online PO {online!r} - the printed one wins; ask if they name two real jobs")
-            items = self.items_from_od(b, od, flags) if od.get('items') else [
-                (i['desc'], i['qty'], abs(i['unit']), abs(i['total'])) for blk in rc.get('blocks', []) for i in blk['items']]
+            if is_ret and rc.get('blocks'):   # the printed ORIG REC blocks are the source; order details may cover only part
+                items = [(i['desc'], i['qty'], abs(i['unit']), abs(i['total'])) for blk in rc['blocks'] for i in blk['items']]
+            else:
+                items = self.items_from_od(b, od, flags) if od.get('items') else [
+                    (i['desc'], i['qty'], abs(i['unit']), abs(i['total'])) for blk in rc.get('blocks', []) for i in blk['items']]
             tax = round(abs(b['tot']) - abs(b['pre']), 2)
             job, jflag = self.resolve_job(po)
+            only_never = bool(tn) and all(self.card_status(t[0], t[1]) == 'never' for t in tn if t[2] not in ('', 'None', None))
+            if jflag and only_never:
+                jflag = f'(PO {po!r} - not looked up: paid on a never_book card, so nothing is posted)'
             if jflag and not is_ret:   # a return's job comes from its ORIG REC originals, not its own PO
                 flags.append(jflag + ('' if po_src == 'printed' else ' [online PO; no printed PO available]'))
             legs = [(t[0], t[1], round(float(t[2]), 2)) for t in tn if t[2] not in ('', 'None', None)]
@@ -332,17 +438,40 @@ class Gen:
 
             if is_ret:
                 groups = self.return_groups(b, od, rc, items, tax, po, job)
-                gl = [f"    ({q(g[0])}, None, {q(g[2])}, {q(g[3])}, [{', '.join(it(*i) for i in g[4])}], {g[5]:.2f}),  # {g[6]}" for g in groups]
+                gline = lambda g: f"    ({q(g[0])}, None, {q(g[2])}, {q(g[3])}, [{', '.join(it(*i) for i in g[4])}], {g[5]:.2f}),  # {g[6]}"
+                gtot = [round(sum(i[3] for i in g[4]) + g[5], 2) for g in groups]
+                per_leg = [groups] * len(charge)
                 if len(charge) > 1:
-                    out.append(f'#   REVIEW: {len(charge)} refund legs {charge} - give each leg its own entry with the groups bought on that card '
-                               '(each group goes back to the tender it was bought with)')
-                for net, last4, lamt in charge:
+                    # each group goes back to the tender it was bought with: use the partition if exactly one fits the amounts;
+                    # if every group is on the same job the partition does not matter - split each leg's share by amount
+                    plan = self.partition(charge, gtot)
+                    jobs_all = {g[0] for g in groups}
+                    if plan is not None:
+                        per_leg = [[groups[gi] for gi, li in enumerate(plan) if li == k] for k in range(len(charge))]
+                        out.append(f'#   {len(charge)} refund legs; each group matched to its leg by amount (the only partition that adds up)')
+                    elif len(jobs_all) == 1 and 'REVIEW' not in jobs_all:
+                        j0, ids0 = groups[0][0], ','.join(sorted({g[3] for g in groups if g[3]}))
+                        tot_all, tax_all = round(sum(gtot), 2), round(sum(g[5] for g in groups), 2)
+                        per_leg, used_tax = [], 0.0
+                        for k, (_, _, lamt) in enumerate(charge):
+                            ltax = round(tax_all - used_tax, 2) if k == len(charge) - 1 else round(abs(lamt) * tax_all / tot_all, 2) if tot_all else 0.0
+                            used_tax += ltax
+                            amt = round(abs(lamt) - ltax, 2)
+                            per_leg.append([(j0, None, f"{len(groups)} ORIG REC group(s), all {j0}", ids0,
+                                             [(f"Returned items, this tender's share ({'; '.join(g[2] for g in groups)})", 1, amt, amt)], ltax,
+                                             f'every group is on {j0}; tender share split by amount')])
+                        out.append(f'#   {len(charge)} refund legs, all groups on {j0}: one entry per leg for its share')
+                    else:
+                        out.append(f'#   REVIEW: {len(charge)} refund legs {charge}, groups {gtot} - no unique way to give each group to a leg by amount. '
+                                   'Give each leg its own entry with the groups bought on that card (check the originals\' tenders), or ask')
+                for (net, last4, lamt), lgroups in zip(charge, per_leg):
                     st = self.card_status(net, last4)
                     lab = card_label(net, last4)
-                    total_groups = round(sum(sum(i[3] for i in g[4]) + g[5] for g in groups), 2)
-                    if len(charge) == 1 and abs(total_groups - abs(lamt)) > 0.004:
+                    gl = [gline(g) for g in lgroups]
+                    total_groups = round(sum(sum(i[3] for i in g[4]) + g[5] for g in lgroups), 2)
+                    if (len(charge) == 1 or lgroups is not groups) and abs(total_groups - abs(lamt)) > 0.004:
                         out.append(f'#   REVIEW: groups sum {total_groups:.2f} != refund {abs(lamt):.2f}')
-                    if any(g[0] == 'REVIEW' for g in groups):
+                    if any(g[0] == 'REVIEW' for g in lgroups):
                         out.append("#   REVIEW: a group has no job yet - replace its 'REVIEW' with the job (or 'untagged ...')")
                     if st == 'never':
                         out.append(f'#   REVIEW: refund to excluded card {lab} - tell the owner; itemized only')
@@ -379,6 +508,8 @@ class Gen:
             if len(card_legs) > 1:
                 flags.append(f'REVIEW: {len(card_legs)} card legs {card_legs} - split the items between them by the printed receipt (each leg is its own bank line)')
             remaining, sc_entries = list(items), []
+            if not card_legs and tax:   # paid entirely with store credit: the tax is paid from it too (last, in receipt order)
+                remaining.append(('Sales tax', 1, tax, tax))
             for net, last4, lamt in sc_legs:
                 rem, chosen, rest = round(abs(lamt), 2), [], []
                 for x in remaining:   # Home Depot applies store credit in receipt order
@@ -516,6 +647,7 @@ def main(argv=None):
     ap.add_argument('--bundles', help='default: newest <sync>/hd_bundles*.jsonl')
     ap.add_argument('--ledger', default='ledger.csv')
     ap.add_argument('--line-items', default='line_items.csv')
+    ap.add_argument('--spine', default='hd_orderhistory_full.json', help='used only to map order numbers to their original sale')
     ap.add_argument('--only-new', action='store_true')
     a = ap.parse_args(argv)
     S = a.sync.rstrip('/')
@@ -523,15 +655,20 @@ def main(argv=None):
     if not bf or not os.path.exists(bf):
         sys.exit(f'no bundles file in {S} - run src/fetch_receipts.js and save its output there as hd_bundles_<date>.jsonl')
     bundles = read_bundles(bf)
+    only = None
     if a.only_new and os.path.exists(os.path.join(S, 'new_rows.csv')):
-        keep = {(r['date'], rowkey_csv(r)) for r in read_csv(os.path.join(S, 'new_rows.csv'))}
-        bundles = [b for b in bundles if (b['d'], rowkey(b)) in keep]
+        only = {(r['date'], rowkey_csv(r), round(abs(float(r['total'] or 0)), 2)) for r in read_csv(os.path.join(S, 'new_rows.csv'))}
     logs = []
     for f in glob.glob('booking_log_*.csv'):
         with open(f, newline='') as fh:
             logs += list(csv.DictReader(l for l in fh if not l.startswith('#')))
-    g = Gen(hdlib.cfg(), read_csv(a.ledger), read_csv(a.line_items), logs)
-    out, rep = g.run(bundles)
+    orders = {}
+    if os.path.exists(a.spine):
+        for r in json.load(open(a.spine)).get('rows', []):
+            if r.get('order') and r.get('receipt') and not str(r.get('type', '')).lower().startswith(('return', 'cancel')):
+                orders.setdefault(r['order'], (r['date'], r['receipt']))
+    g = Gen(hdlib.cfg(), read_csv(a.ledger), read_csv(a.line_items), logs, orders)
+    out, rep = g.run(bundles, only)
     with open(os.path.join(S, 'entries.py'), 'w') as f:
         f.write('\n'.join(out) + '\n')
     with open(os.path.join(S, 'gen_report.txt'), 'w') as f:

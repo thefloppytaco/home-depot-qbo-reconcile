@@ -76,31 +76,40 @@ def main(argv=None):
         for r in json.load(open(a.spine))['rows']:
             take(r)
     bfiles = sorted(set(glob.glob(a.bundles, recursive=True) + ([a.pull] if a.pull else [])))
-    bundles = {}
+    bundles, allb = {}, []
     for f in bfiles:
         for b in read_bundles(f):
+            allb.append(b)
             if b.get('row'):
                 take(b['row'])
             for k in {(b.get('d'), loc_of(b)), (b.get('d'), (b.get('row') or {}).get('receipt'))}:
-                if k[1] and (b.get('tn') or not (bundles.get(k) or {}).get('tn')):
-                    bundles[k] = b   # later files win (newer receipts), but a batch return's sub-row never hides its aggregate
+                cur = bundles.get(k)
+                # the whole receipt wins over a row that repeats part of it (or a tender-less sub-row); otherwise newer files win
+                if k[1] and (cur is None or (bool(b.get('tn')), abs(float(b.get('tot') or 0))) >= (bool(cur.get('tn')), abs(float(cur.get('tot') or 0)))):
+                    bundles[k] = b
     if not rows:
         sys.exit('no rows - pass --pull (a job pull from src/fetch_receipts.js) or keep hd_orderhistory_full.json at the repo root')
 
     ledger = [{'store': r.get('store'), 'date': r['date'], 'transaction_id': r.get('tx'), 'receipt_locator': r.get('receipt', ''),
-               'project': r.get('job', ''), 'tenders': tenders_ledger(r.get('tenders')), 'total': r.get('total')} for r in rows]
+               'project': r.get('job', ''), 'tenders': tenders_ledger(r.get('tenders')), 'total': r.get('total'), 'type': r.get('type', ''),
+               'invoices': ' '.join(map(str, (r.get('invoices') or []) + ([r['order']] if r.get('order') else [])))} for r in rows]
     line_items = read_csv(a.line_items)
     logs = []
     for f in glob.glob('booking_log_*.csv'):
         with open(f, newline='') as fh:
             logs += list(csv.DictReader(l for l in fh if not l.startswith('#')))
 
-    probe = Gen(config, ledger, line_items, logs)
+    Gen.link_shadows(allb)
+    orders = {}
+    for r in rows:
+        if r.get('order') and r.get('receipt') and not str(r.get('type', '')).lower().startswith(('return', 'cancel')):
+            orders.setdefault(r['order'], (r['date'], r['receipt']))
+    probe = Gen(config, ledger, line_items, logs, orders)
     target, _ = probe.resolve_job(a.job)
     if not target or target == 'Tools':
         target = a.job
         config['jobs'][target] = config['jobs'].get(target, '')
-    g = Gen(config, ledger, line_items, logs)
+    g = Gen(config, ledger, line_items, logs, orders)
     is_target = lambda j: bool(j) and (j == target or key2(j) == key2(target))
     print(f'auditing job {target!r} | rows {len(rows)} | receipt bundles {len(bundles)} from {len(bfiles)} file(s)')
 

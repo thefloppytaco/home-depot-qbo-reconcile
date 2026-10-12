@@ -62,9 +62,9 @@ def test_every_step_succeeds(week):
 
 def test_merge_finds_only_the_new_rows(week):
     ws, steps = week
-    assert "matched: 1 | new: 8 | vanished: 0" in steps["merge"].stdout
+    assert "matched: 1 | new: 11 | vanished: 0" in steps["merge"].stdout
     spine = json.loads((ws / "hd_orderhistory_full.json").read_text())
-    assert len(spine["rows"]) == 12
+    assert len(spine["rows"]) == 18
     assert list(ws.glob("hd_orderhistory_full.backup-*.json")), "merge must back up the history before writing"
 
 
@@ -72,7 +72,7 @@ def test_every_new_row_gets_a_bucket(week):
     ws, _ = week
     rows = list(csv.DictReader(open(ws / SYNC / "new_rows.csv")))
     buckets = sorted(r["bucket"] for r in rows)
-    assert buckets == ["cancel", "not-posted", "proposed", "proposed", "proposed", "proposed", "proposed", "sub-row"]
+    assert buckets == ["cancel", "not-posted"] + ["proposed"] * 7 + ["sub-row"] * 2
     assert "BLANK" not in (ws / SYNC / "PROPOSAL.md").read_text()
 
 
@@ -143,15 +143,15 @@ def test_closeout_needs_ids_only_for_posted_entries(week, tmp_path):
     for args, cwd in [([SRC / "merge_orderhistory.py", "--sync", SYNC, "--write"], ws), ([SRC / "build_ledger.py"], ws),
                       ([SRC / "gen_entries.py", "--sync", SYNC, "--only-new"], ws), (["entries.py"], ws / SYNC)]:
         assert run(args, cwd).returncode == 0
-    r = run([SRC / "closeout.py", "--sync", SYNC, "--ids", "P1=1,P2=2,P3=3,S1=4,J1=5"], ws)
+    r = run([SRC / "closeout.py", "--sync", SYNC, "--ids", "P1=1,P2=2,P3=3,S1=4,J1=5,C2=7,C3=8"], ws)
     assert r.returncode != 0 and "C1" in (r.stdout + r.stderr)
     before = (ws / "line_items.csv").read_text().count("\n")
-    r = run([SRC / "closeout.py", "--sync", SYNC, "--ids", "P1=1,P2=2,P3=3,S1=4,J1=5,C1=6", "--write"], ws)
+    r = run([SRC / "closeout.py", "--sync", SYNC, "--ids", "P1=1,P2=2,P3=3,S1=4,J1=5,C1=6,C2=7,C3=8", "--write"], ws)
     assert r.returncode == 0, r.stdout + r.stderr
     after = (ws / "line_items.csv").read_text().count("\n")
-    assert after - before == 19
+    assert after - before == 25
     state = json.loads((ws / "hd_sync_state.json").read_text())
-    assert state["next_window_after"] == "2026-10-10" and state["posted_ids"]["J1"] == "5"
+    assert state["next_window_after"] == "2026-10-12" and state["posted_ids"]["J1"] == "5"
     assert list(ws.glob("booking_log_*.csv"))
 
 
@@ -161,12 +161,33 @@ def test_audit_credits_cross_job_returns_to_the_right_job(week, tmp_path):
     assert r.returncode == 0, r.stdout + r.stderr
     rows = list(csv.DictReader(open(tmp_path / "audit_123_example_st.csv")))
     ret = {(x["receipt"], round(float(x["amount"]), 2)) for x in rows if x["type"] == "Return"}
-    assert ret == {("00050-80015", -37.10), ("00050-90012", -31.80)}
+    assert ret == {("00050-80015", -37.10), ("00050-90012", -31.80), ("00016-58640", -31.76)}
     assert round(sum(float(x["amount"]) for x in rows), 2) == 554.38
+    assert ("00016-58640", -31.76) in {(x["receipt"], round(float(x["amount"]), 2)) for x in rows}   # online item, via order number
     r = run([SRC / "audit_job.py", "--job", "456 Sample Ave", "--out", tmp_path], ws)
     rows = list(csv.DictReader(open(tmp_path / "audit_456_sample_ave.csv")))
-    assert ("00050-80015", -47.70) in {(x["receipt"], round(float(x["amount"]), 2)) for x in rows}
+    got = [(x["receipt"], round(float(x["amount"]), 2)) for x in rows]
+    assert ("00050-80015", -47.70) in got and ("00016-58640", -53.00) in got and ("00019-23903", -53.00) in got
+    assert ("00016-58640", -31.76) not in got
     assert not any(x["receipt"] == "00051-70017" and x["type"] == "Sale" and float(x["amount"]) == 0 for x in rows)
+
+
+def test_order_return_row_on_the_same_receipt_is_not_a_second_credit(week):
+    """One register return, two Home Depot rows: the whole receipt and an order-return row repeating part of it."""
+    ws, _ = week
+    rows = [r for r in csv.DictReader(open(ws / SYNC / "new_rows.csv")) if r["receipt"] == "00016-58640"]
+    assert sorted((r["total"], r["bucket"], r["subrow_of"]) for r in rows) == [("-31.76", "sub-row", "00016-58640"), ("-84.76", "proposed", "")]
+    e = entries(ws)
+    assert [k for k, v in e.items() if v["loc"] == "00016-58640"] == ["C2"]
+    alloc = {g[0]: (round(sum(i[3] for i in g[4]) + g[5], 2), g[3]) for g in e["C2"]["groups"]}
+    assert alloc == {"456 Sample Ave": (53.00, "#5015"), "123 Example St": (31.76, "#5020")}   # online item found by order number
+
+
+def test_missing_block_tax_is_derived_from_the_receipt(week):
+    ws, _ = week
+    c3 = entries(ws)["C3"]
+    assert c3["groups"][0][0] == "456 Sample Ave" and c3["groups"][0][5] == 3.00
+    assert "derived from the receipt total" in (ws / SYNC / "entries.py").read_text()
 
 
 def test_merge_stops_when_a_stored_row_vanishes(tmp_path):
@@ -280,3 +301,59 @@ def test_unknown_job_is_refused_not_guessed(lib):
     with pytest.raises(SystemExit):
         lib.cust_of("999 Nowhere Rd")
     assert lib.cust_of("Tools") is None and lib.cust_of("untagged (NO RECEIPT)") is None
+
+
+def test_partition_gives_each_group_to_its_leg_only_when_unique():
+    legs = [("GR", "2222", 2.83), ("AX", "0000", 7.12)]
+    assert Gen.partition(legs, [2.83, 7.12]) == (0, 1)
+    assert Gen.partition(legs, [7.12, 2.83]) == (1, 0)
+    assert Gen.partition([("GR", "2222", 5.00), ("AX", "0000", 5.00)], [5.00, 5.00]) is None   # two ways - ask
+    assert Gen.partition([("GR", "2222", 122.38), ("AX", "0000", 175.20)], [265.82, 31.76]) is None
+
+
+def _sale_bundle(tn, items, pre, tot, po="123 EXAMPLE ST"):
+    return {"i": 0, "d": "2026-10-01", "t": "Sale", "s": 0, "reg": 1, "txc": 10, "tx": 1, "po_row": po, "tot": tot, "pre": pre, "on": "",
+            "tn": tn, "od": {"items": items, "head": [0, 1, 10, "2026-10-01"], "po_online": po}, "rc": {"printedPO": po, "blocks": [], "balances": []}}
+
+
+def _run_draft(bundles, tmp_path, monkeypatch):
+    out, _ = gen().run(bundles)
+    src = "\n".join(out).replace("from hdlib import *", "from hdlib import *\nreset(CFG)")
+    monkeypatch.chdir(tmp_path)
+    ns = {"CFG": dict(CONFIG), "__file__": str(tmp_path / "entries.py")}
+    exec(compile(src, "entries.py", "exec"), ns)
+    return {e["key"]: e for e in hdlib.E}, src
+
+
+def test_store_credit_only_sale_pays_the_tax_too(tmp_path, monkeypatch):
+    b = _sale_bundle([["GR", "2222", "-53.00"]], [{"sku": "1", "desc": "Caulk", "qty": 1, "net": 50.00, "pretax": 50.00}], 50.00, 53.00)
+    E, _ = _run_draft([b], tmp_path, monkeypatch)
+    assert E["S1"]["amount"] == 53.00 and E["S1"]["items"][-1][0] == "Sales tax"
+    hdlib.reset()
+
+
+def test_multi_leg_return_split_by_unique_partition_and_same_job(tmp_path, monkeypatch):
+    def ret(txc, tn, blocks, tot, pre):
+        return {"i": txc, "d": "2026-10-09", "t": "Return", "s": 0, "reg": 50, "txc": txc, "tx": txc // 10, "po_row": "", "tot": tot, "pre": pre, "on": "",
+                "tn": tn, "od": {}, "rc": {"printedPO": "", "balances": [], "blocks": blocks}}
+    blk = lambda ref, amt, tax: {"ref": ref, "tax": -tax, "items": [{"desc": "ITEM", "qty": 1, "unit": -amt, "total": -amt}]}
+    ledger = [{"store": "0", "date": "2026-09-18", "transaction_id": "4674", "receipt_locator": "00050-46743", "project": "123 EXAMPLE ST", "tenders": "Visa..1111=-106.00", "total": "106.00", "type": "Sale"},
+                {"store": "0", "date": "2026-09-20", "transaction_id": "5512", "receipt_locator": "00052-55128", "project": "456 SAMPLE AVE", "tenders": "Amex..0000=-63.60", "total": "63.60", "type": "Sale"}]
+    g2 = Gen(CONFIG, ledger, [], [])
+    split = ret(10012, [["GR", "2222", "2.83"], ["AX", "0000", "7.12"]],
+                [blk(["0000", "050", "46743", "09/18/26"], 2.67, 0.16), blk(["0000", "052", "55128", "09/21/26"], 6.72, 0.40)], -9.95, -9.39)
+    same = ret(20014, [["GR", "2222", "40.00"], ["AX", "0000", "66.00"]],
+               [blk(["0000", "050", "46743", "09/18/26"], 60.00, 3.60), blk(["0000", "050", "46743", "09/18/26"], 40.00, 2.40)], -106.00, -100.00)
+    out, _ = g2.run([split, same])
+    src = "\n".join(out).replace("from hdlib import *", "from hdlib import *\nreset(CFG)")
+    monkeypatch.chdir(tmp_path)
+    exec(compile(src, "entries.py", "exec"), {"CFG": dict(CONFIG), "__file__": str(tmp_path / "entries.py")})
+    E = {e["key"]: e for e in hdlib.E}
+    # 9/21 printed vs 9/20 in the history: found within 3 days; GR 2.83 = the 123 Example St group, AX 7.12 = the 456 Sample Ave group
+    assert [g[0] for g in E["J1"]["groups"]] == ["123 Example St"] and E["J1"]["amount"] == 2.83
+    assert [g[0] for g in E["C1"]["groups"]] == ["456 Sample Ave"] and E["C1"]["amount"] == 7.12
+    # both groups on one job: each leg gets its share
+    assert E["J2"]["amount"] == 40.00 and E["C2"]["amount"] == 66.00
+    assert {g[0] for k in ("J2", "C2") for g in E[k]["groups"]} == {"123 Example St"}
+    assert not hdlib.ties()
+    hdlib.reset()

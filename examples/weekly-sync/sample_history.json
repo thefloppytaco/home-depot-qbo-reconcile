@@ -27,6 +27,78 @@
    "order": ""
   },
   {
+   "date": "2026-09-30",
+   "type": "Sale",
+   "origin": "#0000, Anytown",
+   "store": 0,
+   "job": "456 SAMPLE AVE",
+   "total": 106.0,
+   "pretax": 100.0,
+   "tx": 5001,
+   "receipt": "00089-50019",
+   "invoices": [
+    "H0000-333333"
+   ],
+   "tenders": [
+    {
+     "net": "AX",
+     "last4": "4444",
+     "amt": "-106.00"
+    }
+   ],
+   "register": 89,
+   "txc": 50019,
+   "order": "H0000-333333"
+  },
+  {
+   "date": "2026-09-27",
+   "type": "Sale",
+   "origin": "#0000, Anytown",
+   "store": 0,
+   "job": "456 SAMPLE AVE",
+   "total": 53.0,
+   "pretax": 50.0,
+   "tx": 4001,
+   "receipt": "00053-40014",
+   "invoices": [
+    "4541008"
+   ],
+   "tenders": [
+    {
+     "net": "VI",
+     "last4": "1111",
+     "amt": "-53.00"
+    }
+   ],
+   "register": 53,
+   "txc": 40014,
+   "order": ""
+  },
+  {
+   "date": "2026-09-26",
+   "type": "Sale",
+   "origin": "#0000, Anytown",
+   "store": 0,
+   "job": "123 EXAMPLE ST",
+   "total": 31.76,
+   "pretax": 29.96,
+   "tx": 3001,
+   "receipt": "00088-30017",
+   "invoices": [
+    "H0000-222222"
+   ],
+   "tenders": [
+    {
+     "net": "AX",
+     "last4": "0000",
+     "amt": "-31.76"
+    }
+   ],
+   "register": 88,
+   "txc": 30017,
+   "order": "H0000-222222"
+  },
+  {
    "date": "2026-09-25",
    "type": "Sale",
    "origin": "#0000, Anytown",
