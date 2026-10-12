@@ -1,0 +1,56 @@
+{
+  "_readme": [
+    "Your private sync config. Copy to hd-sync.json at the repo root (git-ignored) and fill it in.",
+    "The sync tools (src/gen_entries.py, src/hdlib.py, src/audit_job.py) read it. Nothing here is a secret,",
+    "but it is your business's chart of accounts and customer list, so keep it out of any public fork.",
+    "An AI agent with your QuickBooks connector can fill every <ID> for you: see AGENTS.md, 'Setting up for a new business'.",
+    "Keys starting with _ are comments and are ignored."
+  ],
+
+  "company": "Your Company LLC",
+  "cutoff_date": "YYYY-MM-DD",
+  "_cutoff_date": "Never create or change entries dated before this. It only moves forward.",
+
+  "accounts": {
+    "cogs": "<ID>",
+    "tools": "<ID>",
+    "rental": "<ID>",
+    "store_credit": "<ID>"
+  },
+  "_accounts": "QBO account ids. cogs = default materials expense/COGS. tools = where 'Tools' POs go (no project). rental = tool-rental expense (optional; delete the key to use cogs). store_credit = ONE Bank/Cash-on-hand account that pools every Home Depot gift/store-credit card.",
+
+  "vendor_hd": "<ID>",
+  "_vendor_hd": "QBO vendor id for The Home Depot.",
+
+  "cards": {
+    "1111": "<ID>",
+    "2222": "<ID>"
+  },
+  "_cards": "Card last-4 -> the QBO credit-card/bank account its charges land in. Several employee cards often share one account. tender_roster.csv (from src/parse_receipts.py) or new_rows.csv lists every last-4 seen.",
+
+  "never_book": ["9999"],
+  "_never_book": "Last-4s that are NOT company cards (a client's card, a personal card saved on the Pro account). Their purchases are itemized for the record but never posted; any return on them is flagged.",
+
+  "ask_first": ["8888"],
+  "_ask_first": "Last-4s to hold and ask about every time (e.g. an employee's personal card used by mistake).",
+
+  "jobs": {
+    "123 Example St": "<customer or project id>",
+    "456 Sample Ave": "<customer or project id>"
+  },
+  "_jobs": "Canonical job name -> QBO customer id (in QBO, a project is a customer). Matching uses the street number plus the first word of the street, so '123 EXAMPLE STREET' and '123 example st' both find '123 Example St'.",
+
+  "po_aliases": {
+    "OFFICE": "456 Sample Ave"
+  },
+  "_po_aliases": "Your standing rules for PO text that should go to a specific job: normalized PO prefix (letters/digits only, upper case) -> canonical job. Use for the shop/office PO, or a stale job name the register keeps auto-filling.",
+
+  "garbage_pos": ["0", "NA", "NONE"],
+  "_garbage_pos": "PO values that mean 'no job given'. Rows with these are held for a human.",
+
+  "tools_pos": ["TOOLS"],
+  "_tools_pos": "PO values that mean 'tools, no project' -> accounts.tools.",
+
+  "excluded_origin_refunds": "ask",
+  "_excluded_origin_refunds": "When a return refunds onto YOUR card or store credit an item that was originally bought on a never_book card: 'ask' (hold it) or 'untagged' (credit cogs with no job)."
+}

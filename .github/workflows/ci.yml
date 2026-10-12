@@ -28,3 +28,9 @@ jobs:
 
       - name: Run the documented demo (examples/run_demo.py)
         run: python3 examples/run_demo.py
+
+      - name: Run the weekly-sync demo (examples/run_sync_demo.py)
+        run: python3 examples/run_sync_demo.py
+
+      - name: Syntax-check the browser scripts
+        run: for f in src/*.js; do node --check "$f"; done

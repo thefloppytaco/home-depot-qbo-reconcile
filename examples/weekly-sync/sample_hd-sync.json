@@ -1,0 +1,39 @@
+{
+ "_readme": [
+  "Synthetic sample config for examples/run_sync_demo.py. Your real one is hd-sync.json at the repo root (see templates/hd-sync.example.json)."
+ ],
+ "company": "Example Renovations LLC",
+ "cutoff_date": "2026-01-01",
+ "accounts": {
+  "cogs": "80",
+  "tools": "81",
+  "rental": "82",
+  "store_credit": "60"
+ },
+ "vendor_hd": "7",
+ "cards": {
+  "1111": "41",
+  "0000": "42",
+  "4444": "42"
+ },
+ "never_book": [
+  "9999"
+ ],
+ "ask_first": [],
+ "jobs": {
+  "123 Example St": "201",
+  "456 Sample Ave": "202"
+ },
+ "po_aliases": {
+  "OFFICE": "456 Sample Ave"
+ },
+ "garbage_pos": [
+  "0",
+  "NA",
+  "NONE"
+ ],
+ "tools_pos": [
+  "TOOLS"
+ ],
+ "excluded_origin_refunds": "ask"
+}

@@ -1,0 +1,8 @@
+date,receipt_locator,order_number,store,job,card,type,item_desc,qty,unit_price,line_total,return_by,qbo_id
+2026-09-18,00050-46743,,0,123 Example St,Visa ..1111,Sale,Porcelain tile 12x24 (box) [sku 1000101],2,35.00,70.00,2026-12-17,5001
+2026-09-18,00050-46743,,0,123 Example St,Visa ..1111,Sale,Thinset mortar 50 lb [sku 1000102],1,30.00,30.00,2026-12-17,5001
+2026-09-18,00050-46743,,0,123 Example St,Visa ..1111,Sale,Sales tax,1,6.00,6.00,2026-12-17,5001
+2026-09-25,00051-33335,,0,456 Sample Ave,Amex ..4444,Sale,Vanity top 37 in. [sku 1000103],1,200.00,200.00,2026-12-24,5005
+2026-09-25,00051-33335,,0,456 Sample Ave,Amex ..4444,Sale,Sales tax,1,12.00,12.00,2026-12-24,5005
+2026-10-02,00050-12340,,0,123 Example St,Visa ..1111,Sale,Grout 10 lb [sku 1000104],2,25.00,50.00,2026-12-31,5010
+2026-10-02,00050-12340,,0,123 Example St,Visa ..1111,Sale,Sales tax,1,3.00,3.00,2026-12-31,5010
