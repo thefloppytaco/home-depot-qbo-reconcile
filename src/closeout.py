@@ -7,6 +7,10 @@ booking log, and save hd_sync_state.json for next week.
 
 Run from the repo root (where line_items.csv and hd_sync_state.json live). --ids maps every POSTED entry key from
 entries.py to the id QuickBooks returned. Entries itemized with skip() need no id - their rows keep their reason.
+Entered by hand, with no ids to hand? Use --manual instead of --ids: each entry is recorded as manual-<date>-<key>.
+Receipts parked with hold() are written to hd_sync_state.json "held" so next week's merge lists them again, and
+Cancel rows go to "open_cancellations" until their credit is booked (cancellation-sweep) - delete them from the
+state file once resolved.
 --write backs up line_items.csv (never overwriting an earlier backup), appends the week's rows, writes
 booking_log_<date>.csv (never overwriting an earlier log for the same day), and writes hd_sync_state.json.
 --sc-balance  the store-credit account's QuickBooks balance after posting (optional; recorded in the state file so
@@ -23,7 +27,9 @@ sys.path.insert(0, HERE)
 def main(argv=None):
     ap = argparse.ArgumentParser(description=__doc__.split('\n\n')[0], formatter_class=argparse.RawDescriptionHelpFormatter, epilog=__doc__)
     ap.add_argument('--sync', required=True)
-    ap.add_argument('--ids', required=True, help='KEY=qbo_id,KEY=qbo_id,...')
+    g = ap.add_mutually_exclusive_group(required=True)
+    g.add_argument('--ids', help='KEY=qbo_id,KEY=qbo_id,...')
+    g.add_argument('--manual', action='store_true', help='entries were typed in by hand: record them as manual-<date>-<key>')
     ap.add_argument('--write', action='store_true')
     ap.add_argument('--date', default=dt.date.today().isoformat())
     ap.add_argument('--sc-balance')
@@ -31,9 +37,15 @@ def main(argv=None):
     ap.add_argument('--line-items', default='line_items.csv')
     a = ap.parse_args(argv)
     S = a.sync.rstrip('/')
-    ids = dict(x.strip().split('=', 1) for x in a.ids.split(',') if x.strip())
     E = json.load(open(os.path.join(S, 'entries.json')))
     posted = [e for e in E if e.get('book', True)]
+    if a.manual:
+        ids = {e['key']: f"manual-{a.date}-{e['key']}" for e in posted}
+    else:
+        ids = dict(x.strip().split('=', 1) for x in a.ids.split(',') if x.strip())
+        dup = sorted({v for v in ids.values() if list(ids.values()).count(v) > 1})
+        if dup:
+            sys.exit(f'the same id was given for two entries: {dup} - every entry needs its own')
     missing = [e['key'] for e in posted if e['key'] not in ids]
     if missing:
         sys.exit(f'no QuickBooks id given for posted entries: {missing}')
@@ -117,9 +129,21 @@ def main(argv=None):
              'note': 'written by src/closeout.py - read this first next week'}
     prev = json.load(open('hd_sync_state.json')) if os.path.exists('hd_sync_state.json') else {}
     state['history'] = (prev.get('history') or [])[-25:] + [{k: state[k] for k in ('last_sync', 'next_window_after', 'last_posted_entry')}]
+    hp = os.path.join(S, 'held.json')
+    state['held'] = [dict(date=h['date'], receipt=h['loc'], order=h.get('order', ''), reason=h['reason'], since=a.date)
+                     for h in (json.load(open(hp)) if os.path.exists(hp) else [])]
+    cancels = list(prev.get('open_cancellations') or [])
+    nr = os.path.join(S, 'new_rows.csv')
+    if os.path.exists(nr):
+        with open(nr, newline='') as fh:
+            for r in csv.DictReader(fh):
+                if r.get('bucket') == 'cancel' and not any(c.get('order') == r.get('order') and c.get('date') == r.get('date') for c in cancels):
+                    cancels.append(dict(date=r.get('date'), order=r.get('order', ''), receipt=r.get('receipt', '')))
+    state['open_cancellations'] = cancels
     with open('hd_sync_state.json', 'w') as fh:
         json.dump(state, fh, indent=1)
-    print(f"written: {LI}, {log}, hd_sync_state.json (next window after {state['next_window_after']})")
+    print(f"written: {LI}, {log}, hd_sync_state.json (next window after {state['next_window_after']}; "
+          f"{len(state['held'])} held, {len(cancels)} open cancellation(s))")
     return 0
 
 

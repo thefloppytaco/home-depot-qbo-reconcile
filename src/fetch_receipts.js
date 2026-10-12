@@ -318,7 +318,7 @@
         const a = document.createElement('a');
         a.href = URL.createObjectURL(new Blob([st.text + '\n'], {type: 'application/x-ndjson'})); a.download = fname;
         document.body.appendChild(a); a.click(); a.remove();
-        st.status = `done: ${raw.length} rows - downloaded ${fname}. Move it into sync/${TO}/ in the repo.`;
+        st.status = `done: ${raw.length} rows - downloaded ${fname}. Give it to your AI assistant (or put it in sync/${TO}/ in the repo).`;
       }
       if (st.errors.length) st.status += ` (${st.errors.length} error(s): window.__hdf.errors)`;
       log(st.status);

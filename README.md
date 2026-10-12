@@ -64,7 +64,7 @@ ask for.
 |---|---|---|
 | **Run Python on files** | run the scripts that do the arithmetic and draft the entries | required |
 | **Run JavaScript in your signed-in homedepot.com tab** (e.g. Claude in Chrome) | fetch the week's receipts itself | you paste one script into your browser's Console and upload the file it saves ([docs/09](docs/09-weekly-sync.md#fetching-without-a-browser-tool)) |
-| **Create expenses in QuickBooks** (a connector with write access; [docs/07](docs/07-quickbooks-connector.md)) | post the entries after you approve | you get the exact list of entries to type in or import |
+| **Create expenses in QuickBooks** (a connector with write access; [docs/07](docs/07-quickbooks-connector.md)) | post the entries after you approve | you get every entry, line by line, ready to type in |
 | **Keep files between sessions** (a folder on your computer) | pick up where last week left off | save the working files at the end of each sync and hand them back next time ([AGENTS.md](AGENTS.md#where-the-working-files-live)) |
 
 It never signs in to Home Depot for you, and it never posts to QuickBooks without your

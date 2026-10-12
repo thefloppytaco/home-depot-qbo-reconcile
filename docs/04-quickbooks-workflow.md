@@ -31,7 +31,7 @@ card.*
 
 | Situation | How to book it |
 | --- | --- |
-| **Card purchase** | Categorize the feed item → the job's **COGS** (e.g. a "Supplies & materials" or "Tools" COGS account), tagged to the **job/project**. |
+| **Card purchase** | An **Expense** on that card → the job's **COGS** (e.g. a "Supplies & materials" or "Tools" COGS account), tagged to the **job/project**. Create it before the feed line arrives, then **Match** the line to it (categorizing the feed line by hand works too, but can't itemize). |
 | **Return refunded to a card** | **Credit Card Credit** → the job's COGS. |
 | **Cancellation** (item pulled before fulfillment) | **Credit Card Credit** → the order's job's COGS. See *Cancellations* below. |
 | **Store credit earned** (a return loaded onto a store-credit card) | **Journal Entry / Deposit** into your **"HD Store Credit"** clearing account (debit), crediting the job's COGS. |
@@ -54,10 +54,11 @@ set an opening balance (see *Opening balance* below).
 
 ## Projects = customers
 
-In QBO, jobs are modeled as **projects**, and a project belongs to a **customer**. Every
-Home Depot line carries the job (`PO/JOB NAME`). When you book, set the customer reference to
-the project's customer and QBO resolves the project. Keep your own job → customer/project ID
-map in `templates/accounts.example.yml`; look up new jobs as they appear.
+In QBO, jobs are modeled as **projects**, and a project belongs to a **customer** (in the API a
+project is a sub-customer with its own id). Every Home Depot line carries the job (`PO/JOB NAME`).
+When you book, choose the **project** in the Customer/project field (its id, in the API); QBO
+knows its parent customer. Keep your job → id map in `hd-sync.json` (weekly sync) or
+`accounts.yml` (older skills); look up new jobs as they appear.
 
 ---
 

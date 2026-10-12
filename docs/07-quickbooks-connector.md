@@ -1,9 +1,10 @@
 # 07 · Using a QuickBooks connector / MCP
 
-Pass ② of the [runbook](06-runbook.md) — posting the ledger — can be done by a human in
-the QBO UI, or by an AI agent driving a QuickBooks connector (MCP server). This doc covers
-what that connector must actually be able to do, how each ledger situation maps to a QBO
-API entity, and the one thing **no** connector can do.
+Posting — the last step of the [weekly sync](09-weekly-sync.md), or of the older
+[ledger runbook](06-runbook.md) — can be done by a human in the QBO UI, or by an AI agent driving a
+QuickBooks connector (MCP server). This doc covers what that connector must actually be able to do,
+how each situation maps to a QBO API entity, and the one thing **no** connector can do. The weekly
+sync writes the exact API bodies for you (`sync/<date>/payloads.json`).
 
 ## Not every QuickBooks connector qualifies
 
@@ -31,9 +32,9 @@ Checklist — the connector must expose tools that can:
 - Nice to have: create Customer (new jobs appear all the time), create Vendor, and
   Attachable (attach the receipt file to the entry)
 
-If your connector can only read, or can't tag lines with a project, don't force it: have
-the agent produce a review-ready posting list from `ledger.csv` and enter the entries in
-the QBO UI yourself. That's still most of the win.
+If your connector can only read, or can't tag lines with a project, don't force it: the weekly
+sync's `PROPOSAL.md` lists every entry form by form, line by line, ready to type into the QBO UI
+yourself; close out with `closeout.py --manual`. That's still most of the win.
 
 ## Setting one up
 
@@ -78,13 +79,13 @@ Three routes, in rough order of effort:
    `create_expense` vs `qbo_create_...`) — the capability is what matters. The two
    deal-breakers: creating a Purchase with `Credit: true` and project-tagged lines, and
    creating a JournalEntry (or Deposit). Missing either → this connector can't post.
-2. **Fill your ID map** (`accounts.yml`, from
-   [`../templates/accounts.example.yml`](../templates/accounts.example.yml)). Easiest way:
-   have the agent look everything up through the connector — search accounts (cards, COGS,
-   "HD Store Credit"), the Home Depot vendor, and each job's customer/project — and read
-   the IDs back to you.
+2. **Fill your ID map** (`hd-sync.json`, from
+   [`../templates/hd-sync.example.json`](../templates/hd-sync.example.json); the older
+   ledger-first skills use `accounts.yml`). Easiest way: have the agent look everything up
+   through the connector — search accounts (cards, COGS, "HD Store Credit"), the Home Depot
+   vendor, and each job's customer/project — and read the IDs back to you.
 3. **Dry run.** Pick a 2–3 day window. The agent proposes entries only (the
-   [qbo-poster skill](../ai/skills/qbo-poster.SKILL.md) gates on your approval), posts one
+   [hd-sync skill](../ai/skills/hd-sync.SKILL.md) gates on your approval), posts one
    or two, you verify them in the QBO UI, and you click **Match** when the feed lines
    arrive. If you built your own server, do this first pass against the Intuit sandbox
    company. Only then widen the window.
@@ -104,9 +105,8 @@ The playbook's situations ([docs/04](04-quickbooks-workflow.md)) in API terms �
 | Cancellation (resolved) | `Purchase` with `Credit: true` on that card → the order's project |
 
 Projects are **sub-customers**: a line's CustomerRef points at the project and QBO
-resolves the parent. Keep your ID map filled in (`accounts.yml`, from
-[`../templates/accounts.example.yml`](../templates/accounts.example.yml)) so the agent
-posts by ID instead of searching names every run.
+resolves the parent. Keep your ID map filled in (`hd-sync.json`) so the agent posts by ID
+instead of searching names every run.
 
 ## The hard limit: no API can see "For Review"
 

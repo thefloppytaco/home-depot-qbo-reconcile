@@ -22,8 +22,9 @@ approval.
   Claude in Chrome, or the owner pastes the script into their browser's DevTools Console and hands
   you the file it saves ([`docs/09-weekly-sync.md`](../../docs/09-weekly-sync.md)).
 - A QuickBooks connector that can create Purchases and Journal Entries
-  ([`docs/07`](../../docs/07-quickbooks-connector.md)). Without one, the deliverable is `PROPOSAL.md`
-  for the owner to enter by hand — everything else still applies.
+  ([`docs/07`](../../docs/07-quickbooks-connector.md)). Without one, see **No QuickBooks connector**
+  at the end: the owner answers the lookups, checks for duplicates and types the entries from
+  `PROPOSAL.md`.
 
 ## Files (all at the repo root, all git-ignored, all private)
 
@@ -42,16 +43,20 @@ approval.
   bundle has Home Depot's order details; never re-derive what a script already computed.
 - **Keep big data out of the conversation.** The fetch runs in the page; you read only its status
   and then the file. Summarize; don't paste CSVs.
-- **Batch.** Load browser tools in one search, QuickBooks tools in another; fire independent
-  QuickBooks reads together.
+- **Batch.** If your tools load on demand, load the browser ones together and the QuickBooks ones
+  together; fire independent QuickBooks reads at once.
 
 ## 1. Window
 
 Read `hd_sync_state.json`. Fetch from a **compare zone** about three weeks before
 `next_window_after` (`from = next_window_after − 21 days`): every row already stored in that zone
-must come back (proof the pull is healthy), and rows that rang up late still get caught. First sync
-ever: `from = cutoff_date` from `hd-sync.json`. Never create or change anything dated before
-`cutoff_date`.
+must come back (proof the pull is healthy), and rows that rang up late still get caught. If the state
+lists `held` receipts older than that, fetch from the oldest one instead.
+
+**First sync** = there is no `hd_sync_state.json` yet: `from = cutoff_date` from `hd-sync.json`. The
+merge then lists every stored row since the cutoff that isn't booked yet, so rows setup's history pull
+already stored still get entries. Nothing dated before `cutoff_date` is ever created or changed
+(`entries.py` refuses).
 
 ## 2. Fetch (in the owner's browser)
 
@@ -82,7 +87,9 @@ python3 src/merge_orderhistory.py --sync sync/<today> --write
 python3 src/build_ledger.py
 ```
 
-The dry run must say `vanished: 0`. A vanished row means the pull is incomplete or Home Depot voided
+(`build_ledger.py`'s line about "returns needing Gmail/QBO lookup" belongs to the older pipeline;
+ignore it here — the sync resolves returns from the printed receipts.) The dry run must say
+`vanished: 0`. A vanished row means the pull is incomplete or Home Depot voided
 something: stop and look before writing. Read `sync/<today>/job_diffs.csv`: a PO that changed on a row
 you already booked may mean that entry needs re-lining (ask). `new_rows.csv` is the week's checklist —
 every row in it must end up with a bucket.
@@ -94,7 +101,10 @@ python3 src/gen_entries.py --sync sync/<today> --only-new
 ```
 
 Open `sync/<today>/entries.py`. Every judgment call is a `# REVIEW` line; resolve each one by
-editing the `add()` call, turning it into `skip(...)` (itemized, not posted), or deleting it:
+editing the `add()` call, turning it into `skip(...)` (itemized, never posted), or — when you need the
+owner's answer first — replacing it with `hold('<receipt>', '<date>', '<the question>')`. A held receipt
+is listed in the proposal, carried into next week's checklist, and drafted again then. Never just delete
+an entry: `entries.py` refuses a checklist row that has neither an entry nor a hold.
 
 - **No job for a PO** → search QuickBooks customers for the street, confirm with the owner, add the job
   to `hd-sync.json` `"jobs"` (or a standing rule to `"po_aliases"`), and re-run `gen_entries.py`.
@@ -105,6 +115,9 @@ editing the `add()` call, turning it into `skip(...)` (itemized, not posted), or
 - **Several refund legs with no unique split** → each group goes back to the tender it was bought
   with; check the originals' tenders in `ledger.csv`, or ask.
 - **Blank or nonsense PO** → ask.
+- **Cancel rows** (bucket `cancel`) get no entry: their refund only shows in the order's charge history.
+  `closeout.py` keeps them in `hd_sync_state.json` `open_cancellations`; when the card credit shows up,
+  book it per [`cancellation-sweep.SKILL.md`](cancellation-sweep.SKILL.md) and remove it from the list.
 
 Glance at the `# CHECK` lines (derived fee lines, originals with no booking on file, tax derived from
 the receipt total) — they are decided but worth a look. Then:
@@ -148,7 +161,8 @@ python3 src/closeout.py --sync sync/<today> --ids P1=<id>,P2=<id>,J1=<id>,...   
 python3 src/closeout.py --sync sync/<today> --ids ... --write
 ```
 
-This appends the week to `line_items.csv`, writes `booking_log_<date>.csv` and `hd_sync_state.json`.
+This appends the week to `line_items.csv`, writes `booking_log_<date>.csv` and `hd_sync_state.json`
+(including `held` receipts and `open_cancellations`). Entered by hand with no ids to give: `--manual`.
 Then tell the owner, briefly: what was posted; which card feed lines to **Match** to which entry; which
 entries will never get a feed line (store-credit purchases, store-credit refund journal entries — that
 is expected); what is held and why.
@@ -168,6 +182,21 @@ is expected); what is held and why.
   that repeats part of a register receipt, are sub-rows: their items live inside the receipt's entry.
 - The printed PO beats the online PO; standing rules (`po_aliases`) apply without asking while they hold.
 - The cutoff only moves forward. Match, don't Add.
+
+## No QuickBooks connector
+
+Everything above still runs; three steps change hands:
+
+- **Lookups** (a new job, a card's account, an original's job) become questions for the owner. If
+  `hd-sync.json` holds QuickBooks *names* instead of ids, that's fine: the proposal then reads in names.
+- **The duplicate check** (step 5) is the owner's: `PROPOSAL.md` tells them to search QuickBooks for each
+  amount within 3 days before typing it.
+- **Posting**: the owner types each entry from `PROPOSAL.md`'s "Entry by entry" section (form, date,
+  payment account, every line with its account, job and amount; journal entries as debit/credit lines).
+  Then `closeout.py --manual` (or `--ids` with the transaction numbers QuickBooks shows them).
+
+If the session ends between proposal and close-out, the owner keeps `sync/<today>/` with the other
+working files ([AGENTS.md](../../AGENTS.md#where-the-working-files-live)).
 
 ## Questions only the owner can answer
 

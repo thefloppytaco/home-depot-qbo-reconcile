@@ -33,8 +33,8 @@ that must not be broken. Claude Code users get the skills as `/hd-setup`, `/hd-s
 | Capability | Used for | If you don't have it |
 |---|---|---|
 | Run Python on files | every script | required |
-| Run JavaScript in the owner's **signed-in** homedepot.com tab (a browser tool such as Claude in Chrome) | fetching receipts | the owner pastes `src/fetch_receipts.js` into their browser's DevTools Console on the Purchase History page and gives you the `.jsonl` file it saves ([docs/09](docs/09-weekly-sync.md#fetching-without-a-browser-tool)) |
-| A QuickBooks connector that can **create** Purchases and Journal Entries | posting | `PROPOSAL.md` is the deliverable; the owner enters the entries, then gives you the QuickBooks ids for `closeout.py` (any labels will do if ids aren't available) |
+| Run JavaScript in the owner's **signed-in** homedepot.com tab (a browser tool such as Claude in Chrome) | fetching receipts (weekly) and the history pull (setup) | the owner pastes the script (`src/fetch_receipts.js` weekly, `src/pull_orderhistory.js` once at setup) into their browser's DevTools Console on the Purchase History page and gives you the file it saves ([docs/09](docs/09-weekly-sync.md#fetching-without-a-browser-tool)) |
+| A QuickBooks connector that can **create** Purchases and Journal Entries | lookups, the duplicate check, posting | the owner answers the lookups, checks for duplicates, and types the entries from `PROPOSAL.md`'s entry-by-entry section; close out with `closeout.py --manual` ([hd-sync, "No QuickBooks connector"](ai/skills/hd-sync.SKILL.md#no-quickbooks-connector)) |
 | A folder that persists between sessions | next week's sync | see below |
 
 Never sign in to Home Depot or QuickBooks for the owner, and never ask for a password in the
@@ -49,13 +49,14 @@ The sync keeps state between weeks in the repo folder. All of it is git-ignored 
 | `hd-sync.json` | the owner's accounts, cards, jobs and standing rules |
 | `hd_orderhistory_full.json` | every transaction so far; each fetch is merged into it |
 | `line_items.csv` | every booked item with its QuickBooks id — how a return finds its original's job |
-| `hd_sync_state.json` | where next week's window starts |
+| `hd_sync_state.json` | where next week's window starts, receipts on hold, open cancellations |
 | `booking_log_*.csv` | what each sync posted |
+| `sync/<date>/` | that week's draft and proposal — needed until `closeout.py` has run, and its bundles help later job audits |
 
 If your workspace is temporary (a cloud sandbox, a chat), put the repo in a folder on the owner's
-computer if you can reach one. If you can't, end every session by giving the owner those five files
-(a zip is fine) and ask for them back at the start of the next one. `ledger.csv` can always be
-rebuilt with `python3 src/build_ledger.py`.
+computer if you can reach one. If you can't, end every session by giving the owner those files and
+folders as one zip, and ask for it back (with the repo) at the start of the next one. `ledger.csv`
+can always be rebuilt with `python3 src/build_ledger.py`.
 
 ## Repo map
 

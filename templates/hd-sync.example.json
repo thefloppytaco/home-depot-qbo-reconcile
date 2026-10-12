@@ -3,7 +3,9 @@
     "Your private sync config. Copy to hd-sync.json at the repo root (git-ignored) and fill it in.",
     "The sync tools (src/gen_entries.py, src/hdlib.py, src/audit_job.py) read it. Nothing here is a secret,",
     "but it is your business's chart of accounts and customer list, so keep it out of any public fork.",
-    "An AI agent with your QuickBooks connector can fill every <ID> for you: see AGENTS.md, 'Setting up for a new business'.",
+    "An AI agent with your QuickBooks connector can fill every <ID> for you: see ai/skills/hd-setup.SKILL.md.",
+    "No QuickBooks connector? Put the exact QuickBooks names instead of ids - PROPOSAL.md then reads in names, which is all hand entry needs.",
+    "Check it with: python3 src/hdlib.py --check",
     "Keys starting with _ are comments and are ignored."
   ],
 
@@ -24,9 +26,9 @@
 
   "cards": {
     "1111": "<ID>",
-    "2222": "<ID>"
+    "3333": "<ID>"
   },
-  "_cards": "Card last-4 -> the QBO credit-card/bank account its charges land in. Several employee cards often share one account. tender_roster.csv (from src/parse_receipts.py) or new_rows.csv lists every last-4 seen.",
+  "_cards": "Card last-4 -> the QBO credit-card/bank account its charges land in. Several employee cards often share one account. Store-credit and gift cards (network GR / CS / PERK_GC) are NOT listed here: they all post to accounts.store_credit automatically. Every last-4 you have used shows in ledger.csv's tenders column.",
 
   "never_book": ["9999"],
   "_never_book": "Last-4s that are NOT company cards (a client's card, a personal card saved on the Pro account). Their purchases are itemized for the record but never posted; any return on them is flagged.",
@@ -52,5 +54,13 @@
   "_tools_pos": "PO values that mean 'tools, no project' -> accounts.tools.",
 
   "excluded_origin_refunds": "ask",
-  "_excluded_origin_refunds": "When a return refunds onto YOUR card or store credit an item that was originally bought on a never_book card: 'ask' (hold it) or 'untagged' (credit cogs with no job)."
+  "_excluded_origin_refunds": "When a return refunds onto YOUR card or store credit an item that was originally bought on a never_book card: 'ask' (hold it) or 'untagged' (credit cogs with no job).",
+
+  "billable_status": "NotBillable",
+  "_billable_status": "'Billable' if you bill materials back to customers from QuickBooks (cost-plus); otherwise leave 'NotBillable'.",
+
+  "labels": {
+    "<ID>": "QuickBooks name"
+  },
+  "_labels": "Optional: QuickBooks id -> its name (accounts, vendor, customers), so PROPOSAL.md says 'Job Materials (55)' instead of '55'. Delete the example line."
 }

@@ -17,9 +17,9 @@ history. Setup covers both: [`ai/skills/hd-setup.SKILL.md`](../ai/skills/hd-setu
 | 2. Merge | `merge_orderhistory.py` | Adds new rows to your history and writes `new_rows.csv`, the week's checklist. Stops if a row it already had has disappeared. |
 | 3. Rebuild | `build_ledger.py` | Refreshes `ledger.csv`, which returns use to find their original purchases. |
 | 4. Draft | `gen_entries.py` | Writes `entries.py`: one entry per card or store-credit payment, item by item, each on its job. Anything it can't decide is marked `# REVIEW`. |
-| 5. Review | your AI, asking you | Resolves the `# REVIEW` lines: a new job, a new card, an original it can't find. Then runs `entries.py`, which checks that every number ties and writes `PROPOSAL.md`. |
+| 5. Review | your AI, asking you | Resolves the `# REVIEW` lines: a new job, a new card, an original it can't find. Anything still waiting on you is **held** and comes back next week. Then runs `entries.py`, which checks that every number ties and writes `PROPOSAL.md`. |
 | 6. Approve | **you** | Read the proposal. Nothing is posted until you say so. |
-| 7. Post | your AI, through a QuickBooks connector | Creates the entries. No connector? You enter them from `PROPOSAL.md`. |
+| 7. Post | your AI, through a QuickBooks connector | Creates the entries. No connector? You type them from `PROPOSAL.md`'s "Entry by entry" section, after searching QuickBooks for each amount (±3 days) so nothing is entered twice. |
 | 8. Close out | `closeout.py` | Records what was posted (`line_items.csv`, `booking_log_<date>.csv`) and where next week starts (`hd_sync_state.json`). |
 | 9. Match | **you**, in QuickBooks | As card lines arrive in the bank feed, click **Match** on the entry already waiting. Never **Add**: that makes a duplicate. |
 
@@ -36,6 +36,8 @@ no feed line to match, and that's expected.
 - **NOT POSTED** = a purchase on a card that isn't the company's (a client's card on your Pro
   account). It's itemized for the record but never booked.
 - **Lines** lists every item, at the net price you paid.
+- **Entry by entry** is a typing sheet: the QuickBooks form, date, payment account, and every line
+  with its account, customer/project and amount (journal entries as debit and credit lines).
 - **Bucket arithmetic** proves every new Home Depot row is accounted for: posted, not posted, a
   sub-row inside another entry, a cancellation, or held for a question.
 
@@ -53,7 +55,9 @@ minutes:
    ```js
    window.HD_FETCH = {from: '2026-09-15'}
    ```
-4. Paste the **whole** of [`src/fetch_receipts.js`](../src/fetch_receipts.js) and press Enter.
+4. Paste the **whole** of [`src/fetch_receipts.js`](../src/fetch_receipts.js) and press Enter. The
+   easy way to copy it: open that file on GitHub and click the **Copy raw file** button (or ask your
+   assistant to give you the text).
 5. If the Console says **WAITING FOR IDS**, click to page 2 of your Purchase History once.
 6. Wait for **done**. Your browser downloads `hd_bundles_<date>.jsonl`. Give that file to your
    assistant, or put it in `sync/<date>/` in the repo.
@@ -72,6 +76,7 @@ python3 src/gen_entries.py --sync sync/2026-10-12 --only-new
 cd sync/2026-10-12 && python3 entries.py && cd ../..
 #   post the entries in PROPOSAL.md / payloads.json, note each QuickBooks id
 python3 src/closeout.py --sync sync/2026-10-12 --ids P1=101,P2=102,J1=103 --write
+#   (typed them in by hand? use --manual instead of --ids)
 ```
 
 Try the whole loop on fictional data first: `python3 examples/run_sync_demo.py`.

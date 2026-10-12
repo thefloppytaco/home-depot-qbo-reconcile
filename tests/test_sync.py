@@ -357,3 +357,97 @@ def test_multi_leg_return_split_by_unique_partition_and_same_job(tmp_path, monke
     assert {g[0] for k in ("J2", "C2") for g in E[k]["groups"]} == {"123 Example St"}
     assert not hdlib.ties()
     hdlib.reset()
+
+
+# ---------------------------------------------------------------- first sync, holds, hand entry, config
+
+def test_first_sync_after_setup_lists_stored_rows_not_yet_booked(tmp_path):
+    """Setup's full-history pull already stored every row since the cutoff; the first sync must still book them."""
+    ws = make_workspace(tmp_path)
+    (ws / "hd_sync_state.json").unlink()                                   # never synced
+    spine = json.loads((ws / "hd_orderhistory_full.json").read_text())
+    have = {(r["date"], r["receipt"], r["total"]) for r in spine["rows"]}
+    for line in (ws / SYNC / "hd_bundles_2026-10-12.jsonl").read_text().splitlines()[1:]:
+        row = json.loads(line)["row"]
+        if (row["date"], row["receipt"], row["total"]) not in have:
+            spine["rows"].append(row)                                      # "setup" pulled everything
+    (ws / "hd_orderhistory_full.json").write_text(json.dumps(spine))
+    cfg = json.loads((ws / "hd-sync.json").read_text())
+    cfg["cutoff_date"] = "2026-10-01"
+    (ws / "hd-sync.json").write_text(json.dumps(cfg))
+    r = run([SRC / "merge_orderhistory.py", "--sync", SYNC, "--write"], ws)
+    assert r.returncode == 0, r.stdout + r.stderr
+    assert "new: 0" in r.stdout and "stored but not booked yet" in r.stdout
+    rows = list(csv.DictReader(open(ws / SYNC / "new_rows.csv")))
+    assert {x["receipt"] for x in rows} >= {"00090-50006", "00016-58640", "00019-23903"}
+    assert "00050-12340" not in {x["receipt"] for x in rows}                # 10/02 was already booked
+    assert run([SRC / "build_ledger.py"], ws).returncode == 0
+    assert run([SRC / "gen_entries.py", "--sync", SYNC, "--only-new"], ws).returncode == 0
+    r = run(["entries.py"], ws / SYNC)
+    assert r.returncode == 0 and "OK: 9 entries" in r.stdout, r.stdout + r.stderr
+
+
+def test_a_held_receipt_comes_back_next_week(tmp_path):
+    ws = make_workspace(tmp_path)
+    for args, cwd in [([SRC / "merge_orderhistory.py", "--sync", SYNC, "--write"], ws), ([SRC / "build_ledger.py"], ws),
+                      ([SRC / "gen_entries.py", "--sync", SYNC, "--only-new"], ws)]:
+        assert run(args, cwd).returncode == 0
+    draft = (ws / SYNC / "entries.py").read_text()
+    start = draft.index("add('P3'")
+    end = draft.index("note=\"printed PO '456 Sample Ave'\")", start) + len("note=\"printed PO '456 Sample Ave'\")")
+    # deleting an entry is refused...
+    (ws / SYNC / "entries.py").write_text(draft[:start] + draft[end:])
+    r = run(["entries.py"], ws / SYNC)
+    assert r.returncode != 0 and "hold(" in r.stdout
+    # ...holding it is not
+    (ws / SYNC / "entries.py").write_text(draft[:start] + "hold('00077-10106', '2026-10-10', 'which job is the vanity for?', order='H0000-123456')" + draft[end:])
+    r = run(["entries.py"], ws / SYNC)
+    assert r.returncode == 0 and "1 held" in r.stdout, r.stdout + r.stderr
+    assert "HELD - which job is the vanity for?" in (ws / SYNC / "PROPOSAL.md").read_text()
+    r = run([SRC / "closeout.py", "--sync", SYNC, "--manual", "--write"], ws)
+    assert r.returncode == 0, r.stdout + r.stderr
+    state = json.loads((ws / "hd_sync_state.json").read_text())
+    assert state["held"][0]["receipt"] == "00077-10106" and state["posted_ids"]["P1"] == "manual-" + state["last_sync"] + "-P1"
+    assert state["open_cancellations"][0]["order"] == "H0000-123999"
+    # next week: the same fetch file again (zone covers 10/10) - the held receipt is listed again, nothing else is
+    nxt = ws / "sync" / "2026-10-19"
+    nxt.mkdir()
+    shutil.copy(ws / SYNC / "hd_bundles_2026-10-12.jsonl", nxt / "hd_bundles_2026-10-19.jsonl")
+    r = run([SRC / "merge_orderhistory.py", "--sync", "sync/2026-10-19", "--write"], ws)
+    assert r.returncode == 0, r.stdout + r.stderr
+    rows = list(csv.DictReader(open(nxt / "new_rows.csv")))
+    assert [(x["receipt"], x["notes"]) for x in rows] == [("00077-10106", "held last sync")]
+
+
+def test_merge_refuses_a_pull_that_starts_after_last_window(tmp_path):
+    ws = make_workspace(tmp_path)
+    (ws / "hd_sync_state.json").write_text(json.dumps({"next_window_after": "2026-09-20"}))
+    r = run([SRC / "merge_orderhistory.py", "--sync", SYNC], ws)
+    assert r.returncode != 0 and "would be missed" in (r.stdout + r.stderr)
+
+
+def test_entries_before_the_cutoff_are_refused(lib, tmp_path, monkeypatch):
+    monkeypatch.chdir(tmp_path)
+    lib.reset(dict(CONFIG, cutoff_date="2026-10-01"))
+    lib.add("P1", "2026-09-30", "00001-00010", "", 0, "123 Example St", "Visa ..1111", "Sale", 10.60, [("Thing", 1, 10.00, 10.00), (lib.T, 1, 0.60, 0.60)])
+    assert any("before cutoff_date" in str(b) for b in lib.ties())
+
+
+def test_proposal_reads_as_a_hand_entry_sheet(week):
+    ws, _ = week
+    text = (ws / SYNC / "PROPOSAL.md").read_text()
+    assert "| J1 | 2026-10-08 | Journal entry |" in text and "| C1 | 2026-10-09 | Credit card credit |" in text
+    assert "**S1 - Expense (paid from store credit)**" in text
+    assert "| Job Materials (80) |  | 37.10 | 123 Example St (201) |" in text   # J1 credit line, named via "labels"                               # J1 credit line: account, debit, credit, job
+
+
+def test_check_config_catches_placeholders_and_bad_aliases(tmp_path):
+    t = json.loads((REPO / "templates" / "hd-sync.example.json").read_text())
+    (tmp_path / "a.json").write_text(json.dumps(t))
+    problems = hdlib.check_config(str(tmp_path / "a.json"))
+    assert any("<ID>" in p for p in problems) and any("YYYY-MM-DD" in p for p in problems)
+    assert hdlib.check_config(str(SAMPLES / "sample_hd-sync.json")) == []
+    bad = dict(CONFIG, po_aliases={"SHOP": "789 Nowhere Rd"}, cards={"11": "41"})
+    (tmp_path / "b.json").write_text(json.dumps(bad))
+    problems = hdlib.check_config(str(tmp_path / "b.json"))
+    assert any("not in \"jobs\"" in p for p in problems) and any("4-digit" in p for p in problems)

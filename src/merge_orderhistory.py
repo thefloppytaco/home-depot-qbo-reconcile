@@ -16,9 +16,15 @@ Matching is a multiset on (transaction, date, total, store) with the register as
 registers in one store can ring the same transaction number on the same day. Stored rows are never modified;
 differences on matched rows (PO edited after the fact, tenders, receipt) go to <sync>/job_diffs.csv.
 
-Writes in <sync>/: job_diffs.csv (always) and, on --write, new_rows.csv - one line per new row with blank
+Writes in <sync>/: job_diffs.csv (always) and, on --write, new_rows.csv - the week's checklist, with blank
 bucket / entry_key / qbo_id / notes columns. src/gen_entries.py fills bucket and entry_key; every row must end up
 with a bucket (proposed, not-posted, sub-row, cancel, held, ...) so the week's arithmetic adds up.
+
+The checklist is the rows that are new in this pull, PLUS:
+  - rows held last week (hd_sync_state.json "held", written by closeout.py) that are still not booked;
+  - on the FIRST sync (no hd_sync_state.json yet), every stored row dated on/after hd-sync.json's cutoff_date
+    that line_items.csv doesn't already book - setup's full-history pull already stored them, so they would
+    otherwise never count as "new". --since DATE does the same for any date.
 A first run with no hd_orderhistory_full.json yet creates it from the pull. Stdlib only.
 """
 import argparse, collections, csv, datetime as dt, glob, json, os, shutil, sys
@@ -72,6 +78,8 @@ def main(argv=None):
     ap.add_argument('--spine', default='hd_orderhistory_full.json')
     ap.add_argument('--zone')
     ap.add_argument('--late')
+    ap.add_argument('--since', help='also list stored rows on/after this date that line_items.csv does not book')
+    ap.add_argument('--line-items', default='line_items.csv')
     ap.add_argument('--write', action='store_true')
     a = ap.parse_args(argv)
     S = a.sync.rstrip('/')
@@ -84,10 +92,21 @@ def main(argv=None):
     if not inc:
         sys.exit(f'{pull} has no rows')
     zone = a.zone or meta.get('from') or min(r['date'] for r, _ in inc)
-    late = a.late
-    if not late and os.path.exists('hd_sync_state.json'):
-        late = json.load(open('hd_sync_state.json')).get('next_window_after')
-    late = late or zone
+    state = json.load(open('hd_sync_state.json')) if os.path.exists('hd_sync_state.json') else None
+    late = a.late or (state or {}).get('next_window_after') or zone
+    if state and state.get('next_window_after') and zone > state['next_window_after']:
+        sys.exit(f"this pull starts {zone}, after last sync's window ended ({state['next_window_after']}) - rows in between would be "
+                 f"missed. Fetch again from about three weeks before {state['next_window_after']}.")
+    since = a.since
+    if not since and state is None:
+        try:
+            since = json.load(open('hd-sync.json')).get('cutoff_date')
+        except (OSError, ValueError):
+            since = None
+        if since:
+            print(f'first sync (no hd_sync_state.json): also listing stored rows since cutoff_date {since} that are not booked yet')
+    if since and zone > since:
+        sys.exit(f'this pull starts {zone} but rows since {since} are still to be booked - fetch again from {since}')
     inc = [(r, n) for r, n in inc if r['date'] >= zone]
     print(f'pull: {pull} | rows on/after zone {zone}: {len(inc)}')
 
@@ -163,6 +182,26 @@ def main(argv=None):
             bk = f"{os.path.splitext(a.spine)[0]}.backup-{dt.date.today().strftime('%Y%m%d')}{sfx}.json"
         shutil.copy2(a.spine, bk)
         print('backup', bk)
+    # rows already stored that still need booking: held last week, or (first sync / --since) never booked
+    booked = set()
+    if os.path.exists(a.line_items):
+        with open(a.line_items, newline='') as fh:
+            for r in csv.DictReader(fh):
+                booked.add((r.get('date'), r.get('receipt_locator') or ('order:' + (r.get('order_number') or ''))))
+    held = {(h.get('date'), h.get('receipt') or h.get('loc')) for h in (state or {}).get('held', [])}
+    rk = lambda r: r.get('receipt') or ('order:' + (r.get('order') or ''))
+    carry = []
+    for row, s in matched:
+        k = (row['date'], rk(row))
+        if k in booked:
+            continue
+        if k in held:
+            carry.append((row, 'held last sync'))
+        elif since and row['date'] >= since:
+            carry.append((row, f'stored, not booked since {since}'))
+    for d, loc in held - {(r['date'], rk(r)) for r, _ in carry}:
+        if (d, loc) not in booked and d < zone:
+            print(f'  NOTE held row {d} {loc} is older than this pull ({zone}); fetch from {d} to draft it, or it stays held')
     for row, _ in new:
         stored.append(row)
     store['pulled'] = meta.get('fetched_at') or meta.get('pulled') or dt.datetime.now().isoformat(timespec='seconds')
@@ -181,17 +220,19 @@ def main(argv=None):
             if row['receipt'] and (k not in big or abs(row['total']) > abs(big[k]['total'])):
                 big[k] = row
     cols = 'n,date,type,store,receipt,tx,order,po_online,total,pretax,tenders,nick,invoices,subrow_of,late,bucket,entry_key,qbo_id,notes'.split(',')
+    listed = [(row, nick, '') for row, nick in new] + [(row, '', why) for row, why in carry]
     with open(os.path.join(S, 'new_rows.csv'), 'w', newline='') as fh:
         w = csv.writer(fh)
         w.writerow(cols)
-        for n, (row, nick) in enumerate(sorted(new, key=lambda x: (x[0]['date'], x[0]['receipt'])), 1):
+        for n, (row, nick, why) in enumerate(sorted(listed, key=lambda x: (x[0]['date'], x[0]['receipt'])), 1):
             sub = '' if row['tenders'] else agg.get((row['date'], row['store'], row['tx']), '')
             if row['tenders'] and big.get((row['date'], row['receipt'])) is not None and big[(row['date'], row['receipt'])] is not row:
                 sub = row['receipt']
             w.writerow([n, row['date'], row['type'], row['store'], row['receipt'], row['tx'], row.get('order', ''), row['job'], row['total'],
                         row['pretax'], ';'.join(f"{t['net']}..{t['last4']}={t['amt']}" for t in row['tenders']), nick,
-                        ';'.join(map(str, row['invoices'])), sub, 'Y' if row['date'] < late else '', '', '', '', ''])
-    print(f'{S}/new_rows.csv: {len(new)} rows. Next: python3 src/build_ledger.py, then python3 src/gen_entries.py --sync {S} --only-new')
+                        ';'.join(map(str, row['invoices'])), sub, 'Y' if row['date'] < late and not why else '', '', '', '', why])
+    print(f'{S}/new_rows.csv: {len(listed)} rows ({len(new)} new' + (f', {len(carry)} stored but not booked yet' if carry else '') +
+          f'). Next: python3 src/build_ledger.py, then python3 src/gen_entries.py --sync {S} --only-new')
     return 0
 
 

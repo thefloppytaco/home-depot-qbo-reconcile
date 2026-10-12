@@ -31,17 +31,19 @@ connector: everything still works, and the owner enters the proposed entries by 
 
 ## 3. Build `hd-sync.json`
 
-`cp templates/hd-sync.example.json hd-sync.json`, then fill it in with the owner. Look things up in
-QuickBooks yourself and ask the owner to confirm — don't make them dig for ids.
+`cp templates/hd-sync.example.json hd-sync.json`, then fill it in with the owner. With a connector,
+look things up in QuickBooks yourself and ask the owner to confirm — don't make them dig for ids.
+**Without a connector**, use the exact QuickBooks *names* instead of ids (e.g. `"cogs": "Job
+Materials"`): the proposal then reads in names, which is all hand entry needs.
 
 | Key | How to fill it |
 |---|---|
 | `accounts.cogs` | The account Home Depot materials are expensed to (often a Cost of Goods Sold account like "Job Materials"). Ask which, if there are several. |
 | `accounts.tools` | Where tool purchases go (POs like "TOOLS" or "SHOP"), no job. |
 | `accounts.rental` | Tool-rental expense, if they use one. Delete the key otherwise. |
-| `accounts.store_credit` | **One** account that pools every Home Depot gift card and store-credit card (type Bank or Other Current Asset, e.g. "Home Depot Store Credit"). If none exists, propose creating it and wait for a yes. |
+| `accounts.store_credit` | **One** account that pools every Home Depot gift card and store-credit card, e.g. "HD Store Credit". It must be type **Bank** — store-credit purchases are paid *from* it, and QuickBooks only pays from Bank or credit-card accounts. If none exists, propose creating it and wait for a yes. |
 | `vendor_hd` | The vendor record for The Home Depot. Duplicates are common: ask which one they use. |
-| `cards` | Each card last-4 that pays at Home Depot → the QuickBooks credit-card or bank account its charges land in. Several employee cards often share one account. Get the last-4s from a 90-day fetch (step 4) or `tender_roster.csv`, then ask. |
+| `cards` | Each card last-4 that pays at Home Depot → the QuickBooks credit-card or bank account its charges land in. Several employee cards often share one account. After step 4, list every last-4 in `ledger.csv`'s `tenders` column since the cutoff and ask about each. Store-credit and gift cards (`Gift/Store Credit` in the ledger) are not listed: they all use `accounts.store_credit`. |
 | `never_book` | Last-4s that are not company cards (a client's card saved on the Pro account, a personal card). Their purchases are itemized but never posted. |
 | `ask_first` | Last-4s to ask about every time (an employee's personal card used by mistake). |
 | `jobs` | Each active job → the QuickBooks customer id its lines go to. **If the job is a QuickBooks project, use the project's id.** Name each job the way it reads on a PO ("123 Example St"): matching is by street number + first street word, so "123 EXAMPLE STREET" finds it. Build the list from the POs in the history (step 4) against QuickBooks customers, and have the owner confirm the table. |
@@ -49,8 +51,16 @@ QuickBooks yourself and ask the owner to confirm — don't make them dig for ids
 | `garbage_pos`, `tools_pos` | PO values meaning "no job given" (held for a question) and "tools" (tools account). |
 | `cutoff_date` | The first date this sync is responsible for — usually the day after the books were last reconciled. Nothing earlier is ever created or changed. |
 | `excluded_origin_refunds` | When a return refunds onto a company card something bought on a `never_book` card: `"ask"` (default) or `"untagged"`. |
+| `billable_status` | `"Billable"` only if they bill materials back to customers from QuickBooks (cost-plus); otherwise `"NotBillable"`. |
+| `labels` | Optional: each id → its QuickBooks name, so the proposal reads "Job Materials (55)". Worth filling. |
 
-`python3 -c "import json; json.load(open('hd-sync.json'))"` must pass.
+`python3 src/hdlib.py --check` must say the file looks complete (it catches leftover placeholders,
+bad card numbers, aliases pointing at unknown jobs).
+
+**Store-credit opening balance.** Store-credit cards usually hold money earned before the cutoff.
+Ask the owner for each card's balance as of the cutoff (the latest printed `CARD BALANCE`, or Home
+Depot's gift-card balance page) and have them record the total as the store-credit account's opening
+balance on the cutoff date. Otherwise the account drifts negative as old credit is spent.
 
 ## 4. Pull the history
 
@@ -69,10 +79,14 @@ Use `ledger.csv` to fill the gaps in step 3: every PO seen in the last few month
 
 ## 5. The first sync
 
-Run [`hd-sync.SKILL.md`](hd-sync.SKILL.md) with `from = cutoff_date`. The first one has more questions
-than later ones (new jobs, new cards, originals booked before this system existed); later weeks are
-mostly confirmation. Returns of purchases booked before the first sync are matched to their job through
-Home Depot's PO on the original and flagged `# CHECK` — confirm those against QuickBooks.
+Run [`hd-sync.SKILL.md`](hd-sync.SKILL.md) with `from = cutoff_date`. With no `hd_sync_state.json` yet,
+the merge lists every stored row since the cutoff that isn't booked, so everything since the cutoff gets
+drafted even though step 4 already stored it. If the owner already entered some of those in QuickBooks
+by hand, the duplicate check (sync step 5) catches them — that check matters most on the first sync.
+The first sync has more questions than later ones (new jobs, new cards, originals booked before this
+system existed); later weeks are mostly confirmation. Returns of purchases booked before the first sync
+are matched to their job through Home Depot's PO on the original and flagged `# CHECK` — confirm those
+against QuickBooks.
 
 ## 6. Make it routine
 

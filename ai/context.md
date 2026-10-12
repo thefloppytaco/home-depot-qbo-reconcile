@@ -117,23 +117,28 @@ project id}`, `po_aliases {NORMALIZED PO PREFIX: job}`, `garbage_pos`, `tools_po
 ### Weekly working files (`sync/<date>/` and the repo root)
 
 - `new_rows.csv` (merge) — `n, date, type, store, receipt, tx, order, po_online, total, pretax, tenders,
-  nick, invoices, subrow_of, late, bucket, entry_key, qbo_id, notes`. Every row must get a `bucket`
-  (`proposed`, `not-posted`, `sub-row`, `cancel`, `held`); `gen_entries.py` fills what it can.
+  nick, invoices, subrow_of, late, bucket, entry_key, qbo_id, notes`: the rows new in this pull, plus
+  last week's held receipts, plus (first sync only — no `hd_sync_state.json` yet) every stored row since
+  `cutoff_date` not yet in `line_items.csv`. Every row must get a `bucket` (`proposed`, `not-posted`,
+  `sub-row`, `cancel`, `held`); `gen_entries.py` fills what it can.
 - `job_diffs.csv` (merge) — fields that changed on rows already stored (a changed PO on a booked row).
 - `entries.py` (draft from `gen_entries.py`; you resolve `# REVIEW` lines and run it) — calls to
   `add(key, date, receipt, order, store, job, card, type, amount, items, note=, groups=)` and
-  `skip(...)`. Items are `(description, qty, unit, line_total)`, positive for sales and returns alike;
+  `skip(...)` (itemized, never posted) and `hold(receipt, date, question)` (parked for the owner; carried
+  to next week). Items are `(description, qty, unit, line_total)`, positive for sales and returns alike;
   `'Sales tax'` is a line. Types: `Sale`, `Return` (card credit), `Return (SC earn)` (refund to store
   credit → journal entry). `groups` (returns): `(job, customer|None, ORIG REC label, original's QBO id,
   items, tax)` — one per original.
-- `entries.json`, `payloads.json` (`{key: {tool, params}}` — exact QuickBooks API bodies, not posted),
-  `PROPOSAL.md`, `line_items_new.csv` (`qbo_id` = `PENDING-<key>` until close-out).
+- `entries.json`, `held.json`, `payloads.json` (`{key: {tool, params}}` — exact QuickBooks API bodies, not
+  posted), `PROPOSAL.md` (summary table + an entry-by-entry typing sheet), `line_items_new.csv` (`qbo_id` =
+  `PENDING-<key>` until close-out).
 - `line_items.csv` (root) — `date, receipt_locator, order_number, store, job, card, type, item_desc, qty,
   unit_price, line_total, return_by, qbo_id`; returns are negative.
 - `booking_log_<date>.csv` (root) — `qbo_id, date, type, amount, card, job, expense_account,
   receipt_locator, notes`.
 - `hd_sync_state.json` (root) — `last_sync, next_window_after, posted_ids, last_posted_entry,
-  store_credit_balance, pending_rows, history`.
+  store_credit_balance, pending_rows, held [{date, receipt, order, reason}], open_cancellations
+  [{date, order, receipt}], history`. Its absence means the next sync is the first.
 
 ### `receipts.json` — the detail layer (from `src/parse_receipts.py`)
 
@@ -228,7 +233,7 @@ match by amount + date ±3d and inherit its project). Empty file = nothing left 
    via Order Details on the Pro site.
 7. **Date skew: never match on exact date.** The same transaction carries up to three
    dates (receipt/Pro-Xtra, charge, posted) differing by days. Match on
-   **amount + card within ±3 days**.
+   **amount within ±3 days, in the card's QuickBooks account** (not by last-4; see 8).
 8. **Dedupe by amount + date (±3 days), never by card last-4.** QBO memos don't reliably
    carry last-4 (mobile-wallet charges can show a different number). Check **every**
    COGS account, not just the main supplies one. Two similar transactions on nearby days

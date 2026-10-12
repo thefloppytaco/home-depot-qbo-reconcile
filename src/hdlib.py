@@ -28,14 +28,18 @@ groups for returns allocated by ORIG REC: one group per original receipt -> one 
 Overrides on add(): cust='<customer id>', acct='<account id>', pn='<full private note>'.
 skip(...) itemizes a transaction you will NOT post (excluded card, declined personal card): it lands in
 line_items_new.csv with the reason as its qbo_id, and still counts toward the receipt tie.
+hold(receipt, date, 'question') parks a receipt you can't book yet (waiting on the owner): nothing is posted or
+itemized, PROPOSAL.md lists it under Held, and closeout.py carries it into next week's new_rows.csv.
 
 Config: hd-sync.json, found via $HD_SYNC_CONFIG, else the current folder or up to 3 parents (copy
-templates/hd-sync.example.json). Stdlib only.
+templates/hd-sync.example.json). Check it with:  python3 src/hdlib.py --check [hd-sync.json]
+Stdlib only.
 """
 import json, csv, os, re, datetime as dt
 
 T = 'Sales tax'
 E = []
+HELD = []
 SYNC = dt.date.today().isoformat()
 _CFG = None
 
@@ -51,7 +55,7 @@ def _find_config():
             return p
         d = os.path.dirname(d)
     raise SystemExit('hd-sync.json not found. Copy templates/hd-sync.example.json to hd-sync.json at the repo root and fill it in '
-                     '(AGENTS.md, "Setting up for a new business"), or set HD_SYNC_CONFIG.')
+                     '(ai/skills/hd-setup.SKILL.md), or set HD_SYNC_CONFIG.')
 
 
 def cfg():
@@ -67,6 +71,7 @@ def reset(config=None):
     """Clear entries (and optionally inject a config dict) - for tests and for running several weeks in one process."""
     global _CFG
     E.clear()
+    HELD.clear()
     _CFG = config
 
 
@@ -81,6 +86,11 @@ def add(key, date, loc, order, store, job, card, typ, amount, items, note='', re
 def skip(key, date, loc, order, store, job, card, typ, amount, items, reason, note='', groups=None):
     """Itemize a transaction that is NOT posted. Rows land in line_items_new.csv with qbo_id = reason; no payload."""
     add(key, date, loc, order, store, job, card, typ, amount, items, note=note or reason, book=False, reason=reason, groups=groups)
+
+
+def hold(loc, date, reason, order=''):
+    """Park a receipt for a question: no entry, no items. Use it instead of deleting an add() you can't book yet."""
+    HELD.append(dict(loc=loc, date=date, reason=reason, order=order))
 
 
 def is_return(e): return e['type'].lower().startswith('return')
@@ -145,7 +155,13 @@ def _group_total(g): return round(sum(i[3] for i in g[4]) + g[5], 2)
 def ties(new_rows='new_rows.csv', partial=()):
     """Hard checks: qty x unit = line; lines (+ group tax) = entry amount; entries per receipt = receipt total in new_rows.csv."""
     bad = []
+    cutoff = str(cfg().get('cutoff_date') or '')
+    held = {h['loc'] for h in HELD}
     for e in E:
+        if re.fullmatch(r'\d{4}-\d\d-\d\d', cutoff) and e['date'] < cutoff:
+            bad.append((e['key'], f"dated {e['date']}, before cutoff_date {cutoff} - history before the cutoff is never changed"))
+        if e['loc'] in held:
+            bad.append((e['key'], f"receipt {e['loc']} is both held and drafted - keep one"))
         for d, q, u, t in _lines(e):
             if d != T and abs(round(q * u, 2) - t) > 0.004:
                 bad.append((e['key'], 'qty x unit != line', d, q, u, t))
@@ -166,15 +182,18 @@ def ties(new_rows='new_rows.csv', partial=()):
         else:
             cust_of(e['job'], e['cust'])
     if os.path.exists(new_rows):
-        tot = {}
+        tot, have = {}, {e['loc'] for e in E}
         for r in csv.DictReader(open(new_rows)):
             if r.get('tenders') and not r.get('subrow_of'):
                 tot[r['receipt']] = abs(float(r['total']))
+            if r.get('bucket') in ('proposed', 'not-posted') and r.get('receipt') and r['receipt'] not in have | held | set(partial):
+                bad.append((r['receipt'], f"new_rows.csv says '{r['bucket']}' but entries.py has no entry for it - "
+                            "use hold(receipt, date, 'question') for a row you can't book yet, never just delete it"))
         by = {}
         for e in E:
             by[e['loc']] = round(by.get(e['loc'], 0) + e['amount'], 2)
         for loc, s in by.items():
-            if loc in partial:
+            if loc in partial or loc in held:
                 continue
             if loc in tot and abs(tot[loc] - s) > 0.004:
                 bad.append((loc, 'entries != receipt total', s, tot[loc], 'pass partial=(loc,) only if a leg is legitimately not booked'))
@@ -186,7 +205,7 @@ def _desc(d, q, u):
 
 
 def _pline(desc, amt, cust, acct):
-    det = {'AccountRef': {'value': acct}, 'BillableStatus': 'NotBillable', 'TaxCodeRef': {'value': 'NON'}}
+    det = {'AccountRef': {'value': acct}, 'BillableStatus': cfg().get('billable_status', 'NotBillable'), 'TaxCodeRef': {'value': 'NON'}}
     if cust:
         det['CustomerRef'] = {'value': cust}
     return {'Amount': round(amt, 2), 'DetailType': 'AccountBasedExpenseLineDetail', 'Description': desc[:4000], 'AccountBasedExpenseLineDetail': det}
@@ -288,30 +307,69 @@ def write_items(path='line_items_new.csv'):
     return len(rows)
 
 
+def _lab(i):
+    """'Job Materials (55)' when hd-sync.json "labels" names the id, else the id."""
+    n = (cfg().get('labels') or {}).get(str(i))
+    return f'{n} ({i})' if n and n != str(i) else str(i)
+
+
+def _form(e, p):
+    if not e.get('book', True):
+        return 'not posted'
+    if p['tool'] == 'create_journal_entry':
+        return 'Journal entry'
+    pu = p['params']['purchase']
+    if pu.get('Credit'):
+        return 'Credit card credit' if pu['PaymentType'] == 'CreditCard' else 'Expense refund (credit)'
+    return 'Expense' if pu['PaymentType'] == 'CreditCard' else 'Expense (paid from store credit)'
+
+
 def proposal(P, path='PROPOSAL.md', extra=''):
     c = cfg()
     out = [f'# Home Depot -> QuickBooks proposal, sync {SYNC}', '', 'Nothing below has been posted. Approve, change, or hold each entry.', '',
-           '| Key | Date | Type | Paid with -> account | Amount | Job -> customer | Expense acct | Receipt |', '|---|---|---|---|---|---|---|---|']
+           '| Key | Date | QuickBooks form | Paid from | Amount | Job | Receipt |', '|---|---|---|---|---|---|---|']
+    for e in E:
+        rc = e['loc'] + (f" / {e['order']}" if e['order'] else '')
+        if not e.get('book', True):
+            out.append(f"| {e['key']} | {e['date']} | NOT POSTED ({e.get('reason', '')}) | {e['card']} | {e['amount']:,.2f} | {e['job']} | {rc} |")
+            continue
+        p = P[e['key']]
+        paid = f"{e['card']} -> {_lab(c['accounts']['store_credit'] if is_je(e) else acct_of(e['card']))}"
+        if e['groups']:
+            jobs = 'by ORIG REC: ' + '; '.join(f"{g[0]} {_group_total(g):.2f}" for g in e['groups'])
+        else:
+            jobs = (e['job'] or 'untagged').split(' (')[0]
+        out.append(f"| {e['key']} | {e['date']} | {_form(e, p)} | {paid} | {e['amount']:,.2f} | {jobs} | {rc} |")
+    for h in HELD:
+        out.append(f"| held | {h['date']} | HELD - {h['reason']} | | | | {h['loc']}{' / ' + h['order'] if h.get('order') else ''} |")
+
+    out += ['', '## Entry by entry (what to type if you enter them by hand)', '',
+            f"Vendor / payee on every expense and credit: {_lab(c['vendor_hd'])}. Before entering one, search QuickBooks for the same "
+            "amount within 3 days of its date: if it is already there (a bank-feed line someone added), don't enter it again.", '']
     for e in E:
         if not e.get('book', True):
-            out.append(f"| {e['key']} | {e['date']} | NOT POSTED ({e.get('reason', '')}) | {e['card']} | {e['amount']:,.2f} | {e['job']} | - | {e['loc']} |")
+            out.append(f"**{e['key']} - not posted** ({e.get('reason', '')}): {e['amount']:,.2f} on {e['card']}, itemized for the record only.")
+            out.append('')
             continue
-        if e['groups']:
-            kind = 'JE (store-credit refund)' if is_je(e) else 'Card credit'
-            dest = c['accounts']['store_credit'] if is_je(e) else acct_of(e['card'])
-            jobs = '; '.join(f"{g[0]} ({_group_cust(g) or 'untagged'}) {_group_total(g):.2f}" for g in e['groups'])
-            out.append(f"| {e['key']} | {e['date']} | {kind} | {e['card']} -> {dest} | {e['amount']:,.2f} | by ORIG REC: {jobs} | {c['accounts']['cogs']} | {e['loc']} |")
+        p = P[e['key']]
+        if p['tool'] == 'create_journal_entry':
+            je = p['params']['journalEntry']
+            out += [f"**{e['key']} - Journal entry** · {je['TxnDate']} · memo: {je['PrivateNote']}", '',
+                    '| Account | Debit | Credit | Customer / project | Description |', '|---|---:|---:|---|---|']
+            for l in je['Line']:
+                d = l['JournalEntryLineDetail']
+                ent = (d.get('Entity') or {}).get('EntityRef', {}).get('value')
+                dr, cr = (f"{l['Amount']:,.2f}", '') if d['PostingType'] == 'Debit' else ('', f"{l['Amount']:,.2f}")
+                out.append(f"| {_lab(d['AccountRef']['value'])} | {dr} | {cr} | {_lab(ent) if ent else ''} | {l['Description']} |")
         else:
-            out.append(f"| {e['key']} | {e['date']} | {e['type']} | {e['card']} -> {acct_of(e['card'])} | {e['amount']:,.2f} | "
-                       f"{(e['job'] or 'untagged').split(' (')[0]} -> {cust_of(e['job'], e['cust']) or '-'} | {line_acct(e)} | "
-                       f"{e['loc']}{' / ' + e['order'] if e['order'] else ''} |")
-    out += ['', '## Lines', '']
-    for e in E:
-        out.append(f"**{e['key']}** {e['note'] or ('allocated by ORIG REC' if e['groups'] else '')}")
-        for d, q, u, t in _lines(e):
-            out.append(f"- {_desc(d, q, u)}: {t:,.2f}")
-        if e['groups']:
-            out += [f"- tax, {g[2]}: {g[5]:.2f}" for g in e['groups']]
+            pu = p['params']['purchase']
+            out += [f"**{e['key']} - {_form(e, p)}** · {pu['TxnDate']} · payment account {_lab(pu['AccountRef']['value'])} ({e['card']}) · "
+                    f"total {e['amount']:,.2f} · memo: {pu['PrivateNote']}", '',
+                    '| Category (account) | Customer / project | Description | Amount |', '|---|---|---|---:|']
+            for l in pu['Line']:
+                d = l['AccountBasedExpenseLineDetail']
+                cu = (d.get('CustomerRef') or {}).get('value')
+                out.append(f"| {_lab(d['AccountRef']['value'])} | {_lab(cu) if cu else ''} | {l['Description']} | {l['Amount']:,.2f} |")
         out.append('')
     if os.path.exists('new_rows.csv'):
         rows = list(csv.DictReader(open('new_rows.csv')))
@@ -333,13 +391,70 @@ def finish(partial=(), extra=''):
         raise SystemExit('fix the ties above - nothing written')
     with open('entries.json', 'w') as f:
         json.dump(E, f, indent=1)
+    with open('held.json', 'w') as f:
+        json.dump(HELD, f, indent=1)
+    if HELD and os.path.exists('new_rows.csv'):   # held receipts: bucket 'held', no entry keys
+        with open('new_rows.csv', newline='') as f:
+            rows = list(csv.DictReader(f))
+        hl = {h['loc'] for h in HELD}
+        for r in rows:
+            if r.get('receipt') in hl:
+                r['bucket'], r['entry_key'] = 'held', ''
+        with open('new_rows.csv', 'w', newline='') as f:
+            w = csv.DictWriter(f, fieldnames=list(rows[0].keys()))
+            w.writeheader()
+            w.writerows(rows)
     n = write_items()
     P = payloads()
     with open('payloads.json', 'w') as f:
         json.dump(P, f, indent=1)
     proposal(P, extra=extra)
-    print(f'OK: {len(E)} entries, {n} item rows -> entries.json, line_items_new.csv, payloads.json, PROPOSAL.md')
+    print(f'OK: {len(E)} entries, {n} item rows, {len(HELD)} held -> entries.json, line_items_new.csv, payloads.json, PROPOSAL.md')
     for e in E:
         print(f"  {e['key']:4} {e['date']} {e['type'][:16]:16} {e['card']:12} {e['amount']:>10,.2f}  {(e['job'] or 'untagged')[:30]}"
               + ('' if e.get('book', True) else f"  [NOT POSTED: {e.get('reason')}]"))
     return P
+
+
+def check_config(path=None):
+    """Problems with hd-sync.json that would bite later (placeholders, missing keys, bad shapes). [] = fine."""
+    path = path or _find_config()
+    with open(path) as f:
+        raw = json.load(f)
+    c = {k: v for k, v in raw.items() if not k.startswith('_')}
+    bad = []
+    for k in ('cutoff_date', 'accounts', 'vendor_hd', 'cards', 'jobs'):
+        if k not in c:
+            bad.append(f'missing "{k}"')
+    for k in ('cogs', 'tools', 'store_credit'):
+        if k not in (c.get('accounts') or {}):
+            bad.append(f'missing "accounts.{k}"')
+    txt = json.dumps(c)
+    for ph in ('<ID>', '<customer or project id>', 'YYYY-MM-DD'):
+        if ph in txt:
+            bad.append(f'placeholder {ph} still in the file')
+    if c.get('cutoff_date') and not re.fullmatch(r'\d{4}-\d\d-\d\d', str(c['cutoff_date'])):
+        bad.append('cutoff_date must be YYYY-MM-DD')
+    for l4 in list(c.get('cards') or {}) + list(c.get('never_book') or []) + list(c.get('ask_first') or []):
+        if not re.fullmatch(r'\d{4}', str(l4)):
+            bad.append(f'card {l4!r} is not a 4-digit last-4')
+    both = set(c.get('cards') or {}) & set(c.get('never_book') or [])
+    if both:
+        bad.append(f'cards both mapped and never_book: {sorted(both)}')
+    for a, j in (c.get('po_aliases') or {}).items():
+        if j not in (c.get('jobs') or {}):
+            bad.append(f'po_aliases {a!r} points at {j!r}, which is not in "jobs"')
+    if c.get('excluded_origin_refunds', 'ask') not in ('ask', 'untagged'):
+        bad.append('excluded_origin_refunds must be "ask" or "untagged"')
+    if c.get('billable_status', 'NotBillable') not in ('NotBillable', 'Billable'):
+        bad.append('billable_status must be "NotBillable" or "Billable"')
+    return bad
+
+
+if __name__ == '__main__':
+    import sys
+    if len(sys.argv) >= 2 and sys.argv[1] == '--check':
+        problems = check_config(sys.argv[2] if len(sys.argv) > 2 else None)
+        print('\n'.join(problems) if problems else 'hd-sync.json looks complete')
+        sys.exit(1 if problems else 0)
+    print(__doc__)

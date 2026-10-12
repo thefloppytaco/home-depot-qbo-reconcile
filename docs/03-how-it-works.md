@@ -101,4 +101,4 @@ In practice this is a small minority of rows; the rest flow straight through.
   instead. Use it only if you can't run the browser pull — you lose return/cancellation
   detail.
 
-Both emit the same columns, described in the main [README](../README.md#output-ledgercsv).
+Both emit the same columns, described in [ai/context.md](../ai/context.md#ledgercsv--the-output-from-srcbuild_ledgerpy).

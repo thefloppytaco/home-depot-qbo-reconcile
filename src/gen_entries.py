@@ -323,7 +323,8 @@ class Gen:
         """bundles: every bundle in the file. only: optional set of (date, rowkey, abs total) to draft (from new_rows.csv);
         the rest are still used to recognize rows that repeat part of another row's receipt."""
         out = ['# entries.py - DRAFT written by src/gen_entries.py on ' + dt.date.today().isoformat(),
-               "# Resolve every '# REVIEW' line (fix the add() call, change it to skip(), or delete it), glance at '# CHECK' lines, then run:",
+               "# Resolve every '# REVIEW' line: fix the add() call, turn it into skip(...) (itemized, never posted), or replace it with",
+               "# hold('<receipt>', '<date>', '<question for the owner>') to park it until next week. Glance at '# CHECK' lines. Then run:",
                '#     python3 entries.py',
                'import os, sys',
                "sys.path[:0] = [os.path.join(os.path.dirname(os.path.abspath(__file__)), '..', '..', 'src'), " + repr(HERE) + "]",
@@ -575,9 +576,9 @@ class Gen:
         out.append("finish()   # finish(partial=('<receipt>',)) only for a receipt where a leg is deliberately not posted")
         rep.append('')
         rep.append(f'bundles {len(bundles)}: ' + ', '.join(f'{k} {v}' for k, v in sorted(counters.items())))
-        body = out[7:]   # skip the header, which mentions both words
-        nrev = sum(1 for l in body if re.search(r'#\s+REVIEW', l))
-        nchk = sum(1 for l in body if re.search(r'#\s+CHECK', l))
+        body = out[8:]   # skip the header, which mentions both words
+        nrev = sum(1 for l in body if re.search(r'#.*\bREVIEW\b', l))
+        nchk = sum(1 for l in body if re.search(r'#.*\bCHECK\b', l))
         rep.append(f"REVIEW lines: {nrev}   CHECK lines: {nchk}")
         return out, rep
 
@@ -656,7 +657,9 @@ def main(argv=None):
         sys.exit(f'no bundles file in {S} - run src/fetch_receipts.js and save its output there as hd_bundles_<date>.jsonl')
     bundles = read_bundles(bf)
     only = None
-    if a.only_new and os.path.exists(os.path.join(S, 'new_rows.csv')):
+    if a.only_new and not os.path.exists(os.path.join(S, 'new_rows.csv')):
+        sys.exit(f'--only-new needs {S}/new_rows.csv - run python3 src/merge_orderhistory.py --sync {S} --write first')
+    if a.only_new:
         only = {(r['date'], rowkey_csv(r), round(abs(float(r['total'] or 0)), 2)) for r in read_csv(os.path.join(S, 'new_rows.csv'))}
     logs = []
     for f in glob.glob('booking_log_*.csv'):

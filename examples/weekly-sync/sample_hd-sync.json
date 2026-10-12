@@ -35,5 +35,17 @@
  "tools_pos": [
   "TOOLS"
  ],
- "excluded_origin_refunds": "ask"
+ "excluded_origin_refunds": "ask",
+ "labels": {
+  "80": "Job Materials",
+  "81": "Small Tools",
+  "82": "Tool Rental",
+  "60": "HD Store Credit",
+  "7": "The Home Depot",
+  "41": "Visa card",
+  "42": "Amex card",
+  "201": "123 Example St",
+  "202": "456 Sample Ave"
+ },
+ "_labels": "Optional: QuickBooks id -> name, so PROPOSAL.md reads in plain words."
 }
