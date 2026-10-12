@@ -16,8 +16,8 @@ adapt it.
    ```
 
 2. **Customer Receipt / Special Services Invoice** — ProDesk / desk orders (order numbers
-   look like `H2584-526432`). Itemization lives in the **PDF attachment**; the email body is
-   just a wrapper. A "Payment Method" block lists tenders as `Amex 1000 Charged $264.89`.
+   look like `H0000-123456`). Itemization lives in the **PDF attachment**; the email body is
+   just a wrapper. A "Payment Method" block lists tenders as `Amex 0000 Charged $264.89`.
 
 The parser sniffs the text (`Customer Receipt` / `SPECIAL SERVICES` / `Payment Method`) and
 routes to the right extractor. PDFs are read with `pdftotext -layout` (Poppler), which keeps
@@ -53,8 +53,8 @@ One receipt can be paid with several cards **plus** one or more store-credit (me
 cards. The parser reads every tender line in two styles on the same receipt:
 
 ```
-XXXXXXXX6841 STORE CREDIT   0.94       (amount inline)
-XXXXXXXX0641 VISA                       (amount on the next USD$ line)
+XXXXXXXX2222 STORE CREDIT   0.94       (amount inline)
+XXXXXXXX1111 VISA                       (amount on the next USD$ line)
   USD$ 58.26
 ```
 

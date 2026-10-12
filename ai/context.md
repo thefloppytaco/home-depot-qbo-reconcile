@@ -15,6 +15,13 @@ project (it must be recovered from the original purchase), store-credit legs and
 returns/cancellations **never appear in any bank feed**, and the same transaction shows
 different dates in different systems.
 
+Two ways to work, both in this repo. **The weekly sync** (recommended; `ai/skills/hd-sync.SKILL.md`)
+fetches each new transaction's item detail and printed receipt straight from Home Depot's site,
+drafts itemized QuickBooks entries per job and posts them after approval, so every bank-feed line has
+an entry waiting to be Matched. **The ledger-first pipeline** (older) builds a multi-year
+`ledger.csv` from the order history plus Gmail receipts. The sync also uses `ledger.csv`, to find
+the original sale behind each return.
+
 ## Entities
 
 - **Transaction** — one sale, return, or cancellation. Spine source: the order-history
@@ -31,6 +38,17 @@ different dates in different systems.
 - **Project (job)** — the `PO/JOB NAME` on the receipt / `POJobName` in the API. In QBO,
   projects are modeled as **customers' projects**; booking to a project means setting the
   customer reference.
+- **Receipt bundle** — one line of `hd_bundles_*.jsonl` (from `src/fetch_receipts.js`): a
+  transaction's order-history row + Home Depot's structured order details + the parsed printed
+  receipt (+ the Pro Desk order PDF's PO). The sync's unit of work.
+- **ORIG REC block** — on a printed return receipt, the items returned from one original purchase,
+  headed `* ORIG REC: <store> <reg> <txn+check digit> <mm/dd/yy> *` (or `NO RECEIPT`), with their
+  own `SALES TAX` line (sometimes missing). One return can hold several blocks from several jobs.
+- **Sub-row** — an order-history row that repeats part of another row's receipt: the tender-less
+  rows of a batch return, and the order-return row Home Depot adds when a register return includes
+  an online / Pro Desk order. A sub-row's items live inside the receipt's entry; it is never booked.
+- **Line-item tracker** (`line_items.csv`) — every booked item with its QuickBooks id. How a return
+  finds the job its original was *booked* to.
 - **"HD Store Credit" clearing account** — a single QBO account (type **Bank /
   Cash-on-hand**, so it can be a pay-from account) that pools ALL store-credit cards.
   Individual store-credit cards are fungible and are deliberately not tracked separately.
@@ -39,10 +57,11 @@ different dates in different systems.
 
 ### `hd_orderhistory_full.json` — the spine (input)
 
-Produced by `src/pull_orderhistory.js` (or manually per `docs/01`). Shape:
+Produced by `src/pull_orderhistory.js` (or manually per `docs/01`) and extended each week by
+`src/merge_orderhistory.py`. Shape:
 
 ```json
-{ "pulled": <int>, "rows": [ {
+{ "pulled": "<ISO timestamp>", "rows": [ {
     "date": "YYYY-MM-DD",
     "type": "Sale | Return | Cancel | SaleRering | ReturnRering",
     "origin": "\"#0000, City\" or \"online\"",
@@ -53,14 +72,68 @@ Produced by `src/pull_orderhistory.js` (or manually per `docs/01`). Shape:
     "tx": <transaction id>,
     "receipt": "register locator or \"\"",
     "invoices": ["..."],
-    "tenders": [ { "net": "<code>", "last4": "0000", "amt": "<string, negative = charge>" } ]
+    "tenders": [ { "net": "<code>", "last4": "0000", "amt": "<string, negative = charge>" } ],
+    "register": <int>, "txc": <txn with check digit>, "order": "H####-###### or \"\""   (newer pulls)
 } ] }
 ```
+
+Older files have `"pulled": <count>` and no `register` / `txc` / `order`; every tool accepts both.
 
 Tender network codes (`net`): `VI` Visa, `AX` Amex, `MA` Mastercard, `DS` Discover,
 `DB` Debit, `HD` Home Depot card (a credit card, NOT store credit), `ED` other, and the
 store-credit group: **`GR`** gift/merchandise card, **`CS`** cash/store credit,
 **`PERK_GC`** Pro Xtra perks gift card.
+
+### `hd_bundles_<date>.jsonl` — the week's receipts (from `src/fetch_receipts.js`)
+
+Line 1: `{"_meta": {"from", "to", "job", "details", "rows", "fetched_at"}}` (`job` non-empty = a
+job-filtered pull, never merged). Then one bundle per transaction:
+
+```
+i, d (date), t (type), s (store), reg, txc, tx, po_row (online PO), tot, pre, on (order #), nick,
+inv, tn: [[net, last4, amount]], row: {the order-history row, shape above},
+od:  {grand, sub, tax, disc, po_online, added, related ("reg;store;date;txn" of a single-origin
+      return's original, else ""), head: [store, reg, txc, date] (what the details answered for),
+      tn, ct: [{code, kind: debit|credit, amt}] (charge history), big: [order #s with a PDF],
+      items: [{sku, desc, pos, qty, list, net, disc, pretax, tax, dept, st, ft}]}      | od_err
+rc:  {printedPO, head, balances: [{last4, amt, balance}] (store-credit CARD BALANCE lines),
+      blocks: [{ref: [store, reg, txc, mm/dd/yy] | null (NO RECEIPT), tax | null,
+                items: [{upc, desc, qty, unit, total}]}], hasNoReceipt}                 | rc_err
+big: {po} (the Pro Desk order PDF's printed PO)                                          | {err}
+err  (the whole fetch for this row failed; `row` is still present)
+```
+
+Never add the order-details field `accountIdValue` — it holds the full card number. The fetch keeps
+it only when `accountIdType` is `related_transaction_key` (then it's a transaction key, as `related`).
+
+### `hd-sync.json` — the owner's map (private; template `templates/hd-sync.example.json`)
+
+`company`, `cutoff_date`, `accounts {cogs, tools, rental?, store_credit}`, `vendor_hd`,
+`cards {last4: account id}`, `never_book [last4]`, `ask_first [last4]`, `jobs {name: customer or
+project id}`, `po_aliases {NORMALIZED PO PREFIX: job}`, `garbage_pos`, `tools_pos`,
+`excluded_origin_refunds` (`ask` | `untagged`). Keys starting with `_` are comments. Found via
+`$HD_SYNC_CONFIG`, else the current folder or up to three parents.
+
+### Weekly working files (`sync/<date>/` and the repo root)
+
+- `new_rows.csv` (merge) — `n, date, type, store, receipt, tx, order, po_online, total, pretax, tenders,
+  nick, invoices, subrow_of, late, bucket, entry_key, qbo_id, notes`. Every row must get a `bucket`
+  (`proposed`, `not-posted`, `sub-row`, `cancel`, `held`); `gen_entries.py` fills what it can.
+- `job_diffs.csv` (merge) — fields that changed on rows already stored (a changed PO on a booked row).
+- `entries.py` (draft from `gen_entries.py`; you resolve `# REVIEW` lines and run it) — calls to
+  `add(key, date, receipt, order, store, job, card, type, amount, items, note=, groups=)` and
+  `skip(...)`. Items are `(description, qty, unit, line_total)`, positive for sales and returns alike;
+  `'Sales tax'` is a line. Types: `Sale`, `Return` (card credit), `Return (SC earn)` (refund to store
+  credit → journal entry). `groups` (returns): `(job, customer|None, ORIG REC label, original's QBO id,
+  items, tax)` — one per original.
+- `entries.json`, `payloads.json` (`{key: {tool, params}}` — exact QuickBooks API bodies, not posted),
+  `PROPOSAL.md`, `line_items_new.csv` (`qbo_id` = `PENDING-<key>` until close-out).
+- `line_items.csv` (root) — `date, receipt_locator, order_number, store, job, card, type, item_desc, qty,
+  unit_price, line_total, return_by, qbo_id`; returns are negative.
+- `booking_log_<date>.csv` (root) — `qbo_id, date, type, amount, card, job, expense_account,
+  receipt_locator, notes`.
+- `hd_sync_state.json` (root) — `last_sync, next_window_after, posted_ids, last_posted_entry,
+  store_credit_balance, pending_rows, history`.
 
 ### `receipts.json` — the detail layer (from `src/parse_receipts.py`)
 
@@ -170,7 +243,25 @@ match by amount + date ±3d and inherit its project). Empty file = nothing left 
     the next run's window.
 12. **Privacy.** Never commit or paste real receipts, exports, `ledger.csv`,
     account IDs, or `.gmail_creds`. Everything generated is git-ignored; keep it that
-    way. Synthetic data only in `examples/`.
+    way. Synthetic data only in `examples/`. Never read out, print or save a full card
+    number (`accountIdValue` in Home Depot's API).
+13. **Reconcile by receipt, never by row.** The bank sees tender legs; Home Depot's history
+    shows rows. A batch return's tender-less rows, and an order-return row repeating part of a
+    register receipt, are sub-rows — booking them double-counts. The biggest row on a receipt is
+    the receipt. Every new row still gets a bucket, and the counts add up.
+14. **A return row's own PO is not evidence.** Credit each ORIG REC block's items + tax to the job
+    that original was **booked** to (`line_items.csv`, then booking logs, then the original's PO).
+    A batch return at the counter carries one arbitrary PO for items from many jobs. Each group goes
+    back to the tender it was bought with: use the one partition of groups to refund legs that adds
+    up, split by share when every group is on one job, otherwise ask.
+15. **Itemize at net price and book the card charge.** Items at Home Depot's net unit price × qty
+    (the per-line discount sign is inconsistent); Σ net = the receipt's pretax, + tax = total. Store
+    credit pays for items in receipt order and the card leg carries the tax (with no card leg, the
+    store credit pays the tax too). When the card was charged a different amount than the row says,
+    book the charge and find the difference (delivery, adjustment). Never plug.
+16. **The printed PO wins.** Use the PO printed on the register receipt (or the Pro Desk order PDF)
+    over the online PO; the owner's standing rules (`po_aliases`) apply while they hold; a blank,
+    nonsense or unknown PO is a question.
 
 ## Return attribution: the original-receipt lookup ladder
 
@@ -193,10 +284,15 @@ before flagging `return-project-unknown`. Walk the ladder in order and stop at t
 Only when all four miss does the row become `return-project-unknown` for a human. Note which
 rung resolved each return in the booking log.
 
-*Why this matters (real case, 2026-07-14 rcpt 00018-56731):* a return included a $193.41
-shower-faucet set whose `ORIG REC` was an **08/14/25** sale — long before the receipt-download
-window. Steps 1–2 missed it and the whole receipt stalled in review; step 3/4 (Gmail + the
-already-booked original) recover the job (2708 Willow Glen) instead.
+**The weekly sync resolves returns first from the printed receipt it fetched:** each ORIG REC block →
+the original in `ledger.csv` by store + date + transaction (`txc // 10`; within ±3 days for online
+orders, whose printed date can differ) or by order number → the job it was **booked** to. Only what
+that misses falls to the rungs above.
+
+*Why this matters (a real case):* a return included a faucet set whose `ORIG REC` was a sale
+from eleven months earlier — long before the receipt-download window. Steps 1–2 missed it and
+the whole receipt stalled in review; steps 3–4 (Gmail + the already-booked original) recovered
+the job instead.
 
 ## Break receipts down to line items
 
@@ -225,6 +321,24 @@ strengthens every rung of the lookup ladder above.
   exactly one leg has no amount anywhere, back-solve it: total − sum(known legs).
 - HTML receipt emails repeat the receipt block (responsive layout) — parse the first
   copy only (cut at `RETURN POLICY DEFINITIONS`) and dedupe tender lines.
+- **Order-return rows.** When a register return includes items from an online / Pro Desk order,
+  Home Depot lists the receipt twice: the register row (the whole receipt, its real tenders) and an
+  order-return row (just the order's part, with the order number and sometimes a different tender).
+  Book the register row; the order-return row is a sub-row. Its order number tells you which order
+  that block's original came from. Its order details describe the original order, not the return.
+- **Missing block tax.** One-block return receipts often print tax only after `SUBTOTAL`. The
+  block's tax is the receipt's tax left over after the blocks that do print one — never an assumed
+  rate (rates differ by state).
+- **Pro Desk / online orders** have no register receipt; the printed PO is on the order PDF
+  (`receipt/view/bigReceipt`), on the line **before** the "PO / Job Name" label.
+- **Unpriced fee lines** (e.g. a state paint-care fee) come back with no price in the order details;
+  when exactly one item is unpriced and the gap is small, it is the receipt's pretax minus the
+  priced items (flagged for a check).
+- **Date ranges.** Ask Home Depot's order history for its own two-year window and filter locally: a
+  narrow range has come back as an empty success (`orderCount 0`), which must never be read as "no
+  new transactions". `searchValue` filters by job text or order number (Home Depot's own search).
+- **Charge history.** An order's `chargeTransactions` and current total show cancellations and price
+  adjustments that have no order-history row; current total < amount charged = a credit is coming.
 - QuickBooks' public API exposes neither the bank feed's **For Review** queue nor the
   **Match** action — no connector can do the final Match click. Agents pre-create the
   entries; a human matches. Connector capability checklist and the situation → QBO

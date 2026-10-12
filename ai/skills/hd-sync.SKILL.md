@@ -10,7 +10,7 @@ job and itemized line by line — including the store-credit purchases, store-cr
 batch returns that a bank feed never explains. The goal: every card line in the bank feed already
 has an entry to **Match** (never "Add"), and every return credits the job its items came from.
 
-Read [`../context.md`](../context.md) once (invariants 1–15). The scripts do the mechanics; your job
+Read [`../context.md`](../context.md) once (all 16 invariants). The scripts do the mechanics; your job
 is the judgment calls the scripts mark `# REVIEW`, the QuickBooks duplicate check, and the owner's
 approval.
 

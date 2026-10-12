@@ -4,6 +4,12 @@ The order-history pull is the **gold source** for the ledger: unlike the CSV exp
 includes **returns and cancellations**, split tenders, the store, and the PO/Job on every
 transaction.
 
+You run this **once**, during setup, to get your whole history. Each week after that,
+[`src/fetch_receipts.js`](../src/fetch_receipts.js) fetches only the recent weeks, adds item detail
+and printed receipts, and `merge_orderhistory.py` folds the new rows into this file — see
+[09-weekly-sync.md](09-weekly-sync.md). Everything Home Depot's site offers beyond this endpoint is in
+[10-home-depot-data.md](10-home-depot-data.md).
+
 ## The easy way: paste the script
 
 You don't have to write a pagination script yourself —
@@ -23,6 +29,11 @@ your browser:
    click to another page of Purchase History or change a filter.
 5. When it's done, your browser downloads **`hd_orderhistory_full.json`**. Put it in the repo
    root (next to `src/`) — that's where `build_ledger.py` reads it from.
+
+**An AI with a browser tool** can run it for you: it sets `window.HD_PULL = {output: "page"}` before
+running the file, polls `window.__hd_pull.status`, and reads the result back in chunks with
+`window.__hd_pull.chunk(k)` instead of downloading. The IDs the script finds are kept in that tab
+(`window.__hd_ids` and the tab's sessionStorage) so `fetch_receipts.js` can reuse them.
 
 Everything below documents the endpoint the script uses — useful if you want to run or adapt
 the pull yourself.
@@ -83,8 +94,13 @@ causes a 400. They aren't required.
   "timezone":"America/New_York","searchValue":""}}
 ```
 
-- The API returns ~495 orders per page regardless of `pageSize`. **Paginate** `pageNumber`
-  from 1 upward until you've collected the reported `orderCount`.
+- `pageSize: 500` returns up to ~499 orders per page. **Paginate** `pageNumber` from 1 upward
+  until you've collected the reported `orderCount`. At times the API has answered `pageSize: 500`
+  with an empty success; the scripts then retry at 60, which has always worked.
+- A **narrow** date range has also come back as an empty success (`orderCount: 0`). Ask for a full
+  ~24-month window and filter by date yourself; never read an empty answer as "no transactions".
+- `searchValue` is Home Depot's own search: a job name (case-insensitive substring, so every spelling
+  the registers used) or an order number.
 - It **must** run inside an authenticated homedepot.com session (it relies on your cookies).
   Run it from the DevTools **Console**, or drive it with a browser-automation tool. A plain
   server-side `fetch` won't carry the session and will fail.
@@ -92,7 +108,8 @@ causes a 400. They aren't required.
 > **Date-range limit (live-API behavior, mid-2026):** a request whose `startDate`..`endDate`
 > range is too wide now returns HTTP 400 with error code `B2B_ORDER_HISTORY_ERR_8013` ("Start
 > date and end date..."). Ranges of ~24-25 months succeed (the site's own UI uses "Last 25
-> Months"). `src/pull_orderhistory.js` now pulls in ≤24-month windows automatically, and treats
+> Months"). `src/pull_orderhistory.js` pulls in ≤24-month windows automatically (newest first,
+> anchored at the end date so the newest window is always whole), and treats
 > a page-1 400 on any individual window as "this window predates the account's available
 > history" — it logs that, skips the window, and continues with the rest. If you're driving the
 > endpoint by hand instead of using the script, chunk your own requests into ≤24-month windows
@@ -109,7 +126,8 @@ causes a 400. They aren't required.
   totalAmount,              // negative for returns
   preTaxAmount,
   transactionId,
-  receiptDetails,           // register locator
+  receiptDetails,           // register locator "RRRRR-TTTTT" (register - transaction with check digit)
+  registerNumber, transactionIdWithCheckDigit, orderNumber,   // orderNumber "H####-######" for desk/online orders
   invoiceNumbers[],
   tenders: [ { type/net, value /* last4 */, amount } ],
   receiptAddedDate, ... }
@@ -132,15 +150,19 @@ causes a 400. They aren't required.
 
 ## Save the result
 
-Collect every page, de-duplicate by `transactionId | date | total | store`, build compact
+Collect every page, de-duplicate by `transactionId | date | total | store | register | order`
+(two registers in one store can ring the same transaction number on the same day), build compact
 rows, and write them to **`hd_orderhistory_full.json`** in the repo root. `build_ledger.py`
 reads that file. The expected shape is:
 
 ```json
-{ "pulled": 3095, "rows": [ { "date": "...", "type": "Sale", "origin": "...", "store": 0000,
-  "job": "...", "total": 0.00, "pretax": 0.00, "tx": 0, "receipt": "...",
-  "invoices": ["..."], "tenders": [ { "net": "VI", "last4": "0000", "amt": "-0.00" } ] } ] }
+{ "pulled": "2026-10-12T08:30:00Z", "rows": [ { "date": "...", "type": "Sale", "origin": "...",
+  "store": 0000, "job": "...", "total": 0.00, "pretax": 0.00, "tx": 0, "receipt": "...",
+  "invoices": ["..."], "tenders": [ { "net": "VI", "last4": "0000", "amt": "-0.00" } ],
+  "register": 0, "txc": 0, "order": "" } ] }
 ```
+
+`register`, `txc` and `order` are newer; files without them still work everywhere.
 
 See [`../examples/sample_orderhistory.json`](../examples/sample_orderhistory.json) for a
 tiny synthetic example with the exact keys.
