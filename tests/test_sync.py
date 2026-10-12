@@ -161,24 +161,24 @@ def test_audit_credits_cross_job_returns_to_the_right_job(week, tmp_path):
     assert r.returncode == 0, r.stdout + r.stderr
     rows = list(csv.DictReader(open(tmp_path / "audit_123_example_st.csv")))
     ret = {(x["receipt"], round(float(x["amount"]), 2)) for x in rows if x["type"] == "Return"}
-    assert ret == {("00050-80015", -37.10), ("00050-90012", -31.80), ("00016-58640", -31.76)}
+    assert ret == {("00050-80015", -37.10), ("00050-90012", -31.80), ("00021-44410", -31.76)}
     assert round(sum(float(x["amount"]) for x in rows), 2) == 554.38
-    assert ("00016-58640", -31.76) in {(x["receipt"], round(float(x["amount"]), 2)) for x in rows}   # online item, via order number
+    assert ("00021-44410", -31.76) in {(x["receipt"], round(float(x["amount"]), 2)) for x in rows}   # online item, via order number
     r = run([SRC / "audit_job.py", "--job", "456 Sample Ave", "--out", tmp_path], ws)
     rows = list(csv.DictReader(open(tmp_path / "audit_456_sample_ave.csv")))
     got = [(x["receipt"], round(float(x["amount"]), 2)) for x in rows]
-    assert ("00050-80015", -47.70) in got and ("00016-58640", -53.00) in got and ("00019-23903", -53.00) in got
-    assert ("00016-58640", -31.76) not in got
+    assert ("00050-80015", -47.70) in got and ("00021-44410", -53.00) in got and ("00022-55520", -53.00) in got
+    assert ("00021-44410", -31.76) not in got
     assert not any(x["receipt"] == "00051-70017" and x["type"] == "Sale" and float(x["amount"]) == 0 for x in rows)
 
 
 def test_order_return_row_on_the_same_receipt_is_not_a_second_credit(week):
     """One register return, two Home Depot rows: the whole receipt and an order-return row repeating part of it."""
     ws, _ = week
-    rows = [r for r in csv.DictReader(open(ws / SYNC / "new_rows.csv")) if r["receipt"] == "00016-58640"]
-    assert sorted((r["total"], r["bucket"], r["subrow_of"]) for r in rows) == [("-31.76", "sub-row", "00016-58640"), ("-84.76", "proposed", "")]
+    rows = [r for r in csv.DictReader(open(ws / SYNC / "new_rows.csv")) if r["receipt"] == "00021-44410"]
+    assert sorted((r["total"], r["bucket"], r["subrow_of"]) for r in rows) == [("-31.76", "sub-row", "00021-44410"), ("-84.76", "proposed", "")]
     e = entries(ws)
-    assert [k for k, v in e.items() if v["loc"] == "00016-58640"] == ["C2"]
+    assert [k for k, v in e.items() if v["loc"] == "00021-44410"] == ["C2"]
     alloc = {g[0]: (round(sum(i[3] for i in g[4]) + g[5], 2), g[3]) for g in e["C2"]["groups"]}
     assert alloc == {"456 Sample Ave": (53.00, "#5015"), "123 Example St": (31.76, "#5020")}   # online item found by order number
 
@@ -337,13 +337,13 @@ def test_multi_leg_return_split_by_unique_partition_and_same_job(tmp_path, monke
         return {"i": txc, "d": "2026-10-09", "t": "Return", "s": 0, "reg": 50, "txc": txc, "tx": txc // 10, "po_row": "", "tot": tot, "pre": pre, "on": "",
                 "tn": tn, "od": {}, "rc": {"printedPO": "", "balances": [], "blocks": blocks}}
     blk = lambda ref, amt, tax: {"ref": ref, "tax": -tax, "items": [{"desc": "ITEM", "qty": 1, "unit": -amt, "total": -amt}]}
-    ledger = [{"store": "0", "date": "2026-09-18", "transaction_id": "4674", "receipt_locator": "00050-46743", "project": "123 EXAMPLE ST", "tenders": "Visa..1111=-106.00", "total": "106.00", "type": "Sale"},
-                {"store": "0", "date": "2026-09-20", "transaction_id": "5512", "receipt_locator": "00052-55128", "project": "456 SAMPLE AVE", "tenders": "Amex..0000=-63.60", "total": "63.60", "type": "Sale"}]
+    ledger = [{"store": "0", "date": "2026-09-18", "transaction_id": "3131", "receipt_locator": "00050-31311", "project": "123 EXAMPLE ST", "tenders": "Visa..1111=-106.00", "total": "106.00", "type": "Sale"},
+                {"store": "0", "date": "2026-09-20", "transaction_id": "3232", "receipt_locator": "00052-32322", "project": "456 SAMPLE AVE", "tenders": "Amex..0000=-63.60", "total": "63.60", "type": "Sale"}]
     g2 = Gen(CONFIG, ledger, [], [])
     split = ret(10012, [["GR", "2222", "2.83"], ["AX", "0000", "7.12"]],
-                [blk(["0000", "050", "46743", "09/18/26"], 2.67, 0.16), blk(["0000", "052", "55128", "09/21/26"], 6.72, 0.40)], -9.95, -9.39)
+                [blk(["0000", "050", "31311", "09/18/26"], 2.67, 0.16), blk(["0000", "052", "32322", "09/21/26"], 6.72, 0.40)], -9.95, -9.39)
     same = ret(20014, [["GR", "2222", "40.00"], ["AX", "0000", "66.00"]],
-               [blk(["0000", "050", "46743", "09/18/26"], 60.00, 3.60), blk(["0000", "050", "46743", "09/18/26"], 40.00, 2.40)], -106.00, -100.00)
+               [blk(["0000", "050", "31311", "09/18/26"], 60.00, 3.60), blk(["0000", "050", "31311", "09/18/26"], 40.00, 2.40)], -106.00, -100.00)
     out, _ = g2.run([split, same])
     src = "\n".join(out).replace("from hdlib import *", "from hdlib import *\nreset(CFG)")
     monkeypatch.chdir(tmp_path)
@@ -379,7 +379,7 @@ def test_first_sync_after_setup_lists_stored_rows_not_yet_booked(tmp_path):
     assert r.returncode == 0, r.stdout + r.stderr
     assert "new: 0" in r.stdout and "stored but not booked yet" in r.stdout
     rows = list(csv.DictReader(open(ws / SYNC / "new_rows.csv")))
-    assert {x["receipt"] for x in rows} >= {"00090-50006", "00016-58640", "00019-23903"}
+    assert {x["receipt"] for x in rows} >= {"00090-50006", "00021-44410", "00022-55520"}
     assert "00050-12340" not in {x["receipt"] for x in rows}                # 10/02 was already booked
     assert run([SRC / "build_ledger.py"], ws).returncode == 0
     assert run([SRC / "gen_entries.py", "--sync", SYNC, "--only-new"], ws).returncode == 0

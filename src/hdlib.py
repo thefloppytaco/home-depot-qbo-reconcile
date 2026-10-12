@@ -5,7 +5,7 @@
     add('P1', '2026-10-05', '00090-50006', 'H0000-000001', 1234, '123 Example St', 'MC ..1111', 'Sale', 549.94, [
         ('32 in. steel prehung door [sku 826322]', 1, 388.00, 388.00), ..., (T, 1, 31.13, 31.13)], note='printed PO 123 Example St')
     add('J1', ..., 'SC ..2222', 'Return (SC earn)', 73.06, [], groups=[
-        (job, cust_or_None, 'ORIG REC 1234 050 46743 09/18/26', '#11538', [(desc, qty, unit, total)], tax), ...])
+        (job, cust_or_None, 'ORIG REC 0000 050 31311 09/18/26', '#5001', [(desc, qty, unit, total)], tax), ...])
     finish()
 
 `src/gen_entries.py` writes that file for you from the receipt bundles; you review it and run it.

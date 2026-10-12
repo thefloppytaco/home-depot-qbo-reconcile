@@ -57,7 +57,7 @@ the order details). It returns the receipt as HTML. Its text has things no other
 - `PO/JOB NAME:` — the PO typed at the register. It wins over the online PO.
 - `XXXX1234 STORE CREDIT -50.00` / `CARD BALANCE 12.10` — each store-credit card used, and its
   balance after.
-- On returns, `* ORIG REC: 0000 050 46743 09/18/26 *` blocks (store, register, transaction with check
+- On returns, `* ORIG REC: 0000 050 31311 09/18/26 *` blocks (store, register, transaction with check
   digit, date of the original), each followed by its items and usually its own `SALES TAX` line.
   `ORIG REC: NO RECEIPT` = no original. One-block receipts often print tax only after `SUBTOTAL`.
   The block's tax is then whatever receipt tax is left.
@@ -81,7 +81,7 @@ charge date, which can be days after the order date.
 ## Return originals: how the sync finds them
 
 ORIG REC → the original in `ledger.csv` by store + date + transaction (the printed number has a
-check digit: `46743 // 10 = 4674`). Online orders can print a date a day or two off the history's
+check digit: `31311 // 10 = 3131`). Online orders can print a date a day or two off the history's
 date, so the match allows ±3 days. If that misses, the original is looked up by order number (an
 order-return row's order number tells the whole receipt which order a block came from). Then the
 job is the one that original was **booked** to: `line_items.csv` first, then the booking logs,
