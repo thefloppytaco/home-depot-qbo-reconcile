@@ -1,288 +1,184 @@
-# Home Depot → QuickBooks project-expense reconciliation
+# Home Depot → QuickBooks, booked to the right job
 
 [![CI](https://github.com/thefloppytaco/home-depot-qbo-reconcile/actions/workflows/ci.yml/badge.svg)](https://github.com/thefloppytaco/home-depot-qbo-reconcile/actions/workflows/ci.yml)
 
-Turn a business's Home Depot purchase and return history into a clean, per-project
-expense **ledger** you can match against inside QuickBooks Online (QBO).
+For contractors who buy at Home Depot on a Pro account and keep their books in QuickBooks Online.
+Once a week, an AI assistant uses this repo to pull every Home Depot purchase and return. It drafts
+the QuickBooks entries line by line on the right job, and posts them once you approve. When a card
+charge shows up in your bank feed, the entry is already there to **Match**.
 
-If you run a contracting / renovation business and buy from Home Depot on a Pro
-account, this pipeline answers the questions a raw bank feed can't:
+It handles the cases that make Home Depot bookkeeping miserable:
 
-- **Which job does each purchase belong to?** (from the PO/Job name on the receipt)
-- **When something is returned, which job gets the credit?** (returns are linked back
-  to the *original* purchase, so the money lands on the right project)
-- **What actually paid for it?** (real split tenders and the *specific* store-credit
-  card used — not a single collapsed "store credit" blob)
+- **Batch returns.** One return at the counter often holds items from several jobs, under one PO
+  that's right for none of them. Each item's credit goes to the job its original purchase was
+  booked to, using the "ORIG REC" lines on the receipt.
+- **Store credit and gift cards.** Purchases paid with them, and refunds onto them, never appear
+  in a bank feed. They get entries anyway, through one store-credit account.
+- **Split payments.** Store credit pays for items in receipt order and the card carries the tax,
+  so every entry equals what that card was actually charged.
+- **Pro Desk and online orders, cancellations, price adjustments, client cards saved on your account,
+  mistyped POs.** Each is handled by a rule or turned into a question for you. It never guesses
+  a job.
 
-The result is one row per transaction with a project, the tender breakdown, store-credit
-routing, and a review flag for the handful of rows a human should eyeball.
-
-The system has **two halves** that work together:
-
-- **Batch engine (this repo's scripts)** — builds the full multi-year `ledger.csv` you post
-  to / match against in QuickBooks. Run it on a cadence (e.g. weekly).
-- **Daily receipt log (optional automation)** — a small scheduled job that each morning
-  pulls the day's new Home Depot receipts into an **Airtable** tracker and flags the ones
-  that need manual QuickBooks handling (returns, store credit, multi-card). See
-  **[docs/05-daily-receipt-log.md](docs/05-daily-receipt-log.md)**.
-
-The genuinely hard bookkeeping — store-credit legs and cancellations that never hit the
-bank feed — is explained, with the rules to handle it, in
-**[docs/04-quickbooks-workflow.md](docs/04-quickbooks-workflow.md)**.
-
-> **Heads up:** this repo ships **code and documentation only**. It contains **no
-> receipts, no account numbers, and no financial data**. Everything you generate (your
-> downloaded receipts, your order-history JSON, your ledger) stays on your machine and is
-> git-ignored. See [Privacy & safety](#privacy--safety).
+> This repo is code and instructions only. It holds no receipts, account numbers or financial
+> data. Your data stays in your own working folder and is never committed.
 
 ---
 
-## Why two data sources
+## Point your AI at it
 
-Neither Home Depot data source is complete on its own, so the pipeline can use both:
+Copy one of these into your AI assistant.
 
-| Source | What it's good for | What it's missing |
-| --- | --- | --- |
-| **Order-history API pull** (`hd_orderhistory_full.json`) | The **gold source**. Every transaction — sales, **returns**, cancellations, online orders — with split tenders, project, and store. | Nothing major; this is the spine. |
-| **Email receipts** (PDF/HTML from Gmail) | The **detail layer**: return → original-purchase links, the *real* store-credit card numbers, line items. | Only ~2/3 of transactions email a receipt. |
+**Claude** (desktop or web app; ideally with the Claude in Chrome extension and a QuickBooks
+connector):
 
-The newest builder (`build_ledger.py`) treats the **order-history pull as the spine** and
-uses the **email receipts only to recover the original project for returns** that come
-through with a blank job. An older `merge_ledger.py` builds the same ledger from the CSV
-export instead of the API pull — kept for reference (see [Two builders](#two-builders)).
-
----
-
-## The pipeline at a glance
-
-```
-                                  ┌─────────────────────────────┐
-  Home Depot website (logged in)  │  docs/01-pull-order-history  │
-        └──────────────┬─────────►│  paste JS in DevTools /      │
-                       │          │  Claude browser tool         │
-                       ▼          └─────────────┬───────────────┘
-             hd_orderhistory_full.json          │
-                       │                         │
-  Gmail (HD receipts)  │                         ▼
-        │              │                 ┌───────────────┐
-        ▼              │                 │ build_ledger  │──►  ledger.csv
-  download_receipts ───┤                 │    .py        │     (one row / txn,
-        │              │                 └───────┬───────┘      project + tenders +
-        ▼              │                         │              store-credit routing
-   downloads/*.pdf ────┴──►  parse_receipts ─────┘              + review flag)
-                              .py                                      │
-                                │                                      ▼
-                    receipts.json + tender_roster.csv        Match in QuickBooks
-                    + reconciliation_report.csv              (docs/04-quickbooks-workflow)
+```text
+Set up the Home Depot → QuickBooks sync for my business using
+https://github.com/thefloppytaco/home-depot-qbo-reconcile — read its AGENTS.md first.
 ```
 
-1. **Pull order history** → `hd_orderhistory_full.json` — the authoritative list of every
-   transaction. See **[docs/01-pull-order-history.md](docs/01-pull-order-history.md)**.
-2. **Download receipt emails** → `download_receipts.py` grabs every HD receipt from Gmail
-   over IMAP into `downloads/`. See **[docs/02-gmail-setup.md](docs/02-gmail-setup.md)**.
-3. **Parse receipts** → `parse_receipts.py downloads/` reads every PDF/HTML receipt and
-   writes `receipts.json`, `reconciliation_report.csv`, and `tender_roster.csv`. It also
-   resolves each return's `ORIG REC` links back to the original purchase's project.
-4. **Build the ledger** → `build_ledger.py` joins the spine + receipt detail into
-   **`ledger.csv`**.
-5. **Match in QuickBooks** → label each card/account in `tender_roster.csv`, then reconcile
-   `ledger.csv` against QBO. See **[docs/04-quickbooks-workflow.md](docs/04-quickbooks-workflow.md)**.
+Every week after that: **"Run the Home Depot sync."** To check a job: **"Check the Home Depot
+numbers for 123 Main St."**
 
-### The guides
-
-| Guide | What it covers |
-| --- | --- |
-| [docs/01-pull-order-history.md](docs/01-pull-order-history.md) | Pulling your authoritative order history (incl. returns/cancellations) from the Home Depot site API. |
-| [docs/02-gmail-setup.md](docs/02-gmail-setup.md) | Creating the Gmail App Password so `download_receipts.py` can fetch your receipt emails. |
-| [docs/03-how-it-works.md](docs/03-how-it-works.md) | The data model: receipt formats, register locators, how returns are linked to their original project, store-credit routing. |
-| [docs/04-quickbooks-workflow.md](docs/04-quickbooks-workflow.md) | The bookkeeping playbook: how to book each situation in QBO, the store-credit clearing account, the cancellation "ghost" gap, and the date-skew dedupe rule. |
-| [docs/05-daily-receipt-log.md](docs/05-daily-receipt-log.md) | The optional daily automation into Airtable + a genericized scheduled-task template. |
-| [docs/06-runbook.md](docs/06-runbook.md) | A copy-paste recurring runbook to keep QuickBooks current. |
-| [docs/07-quickbooks-connector.md](docs/07-quickbooks-connector.md) | Posting via a QuickBooks connector/MCP: what it must support, **how to set one up** (and smoke-test it), the ledger → QBO API entity mapping, and the "For Review" limitation no connector escapes. |
-| [docs/08-claude-code.md](docs/08-claude-code.md) | Running everything in Claude Code: `/hd-setup`, `/hd-runbook`, wiring Intuit's official QuickBooks MCP server, and automating the weekly loop. |
-| [templates/](templates/) | The `accounts.example.yml` config template for your own account/project/card IDs. |
-| [ai/](ai/) | The machine-readable layer for AI agents — data dictionary, invariants, and ready-to-adapt skill templates. See [For AI agents](#for-ai-agents) below. |
-
----
-
-## Requirements
-
-- **Python 3.10+** (standard library only — no `pip install` needed for the scripts).
-- **`pdftotext`** on your PATH, used by `parse_receipts.py` to read receipt PDFs.
-  It ships with **Poppler**:
-  - macOS: `brew install poppler`
-  - Debian/Ubuntu: `sudo apt-get install poppler-utils`
-  - Windows: install Poppler and add its `bin/` to PATH (or run under WSL).
-- A **Gmail account** that receives your Home Depot receipts, with 2-Step Verification on
-  so you can create an App Password (for step 2 only).
-- A **Home Depot Pro** online account (for step 1).
-
-Developers/CI: `pip install pytest` to run the test suite (`pytest -q`); runtime needs no
-pip packages.
-
-Verify your setup:
+**Claude Code** (in a terminal):
 
 ```bash
-python3 --version      # 3.10 or newer
-pdftotext -v           # prints a Poppler version
-```
-
----
-
-## Try it in 30 seconds (no data needed)
-
-```bash
-python3 examples/run_demo.py
-```
-
-Runs the whole pipeline against synthetic sample data and prints the resulting ledger —
-no credentials, no real data, no `pdftotext` install needed. It's the fastest way to see
-the flagship behaviors: a return resolved back to its original project via the receipt's
-`ORIG REC` link, store-credit tenders routed to the shared clearing account, and a
-cancellation flagged for review.
-
----
-
-## Quick start
-
-```bash
-# 0. clone the repo and enter it
 git clone https://github.com/thefloppytaco/home-depot-qbo-reconcile.git
-cd home-depot-qbo-reconcile
-
-# 1. pull your full order history: paste src/pull_orderhistory.js into the DevTools
-#    Console on homedepot.com Purchase History (see docs/01), then save the file it
-#    downloads — hd_orderhistory_full.json — into the repo root
-
-# 2. download your receipt emails (see docs/02 for the App Password)
-cp src/.gmail_creds.template src/.gmail_creds   # then edit in your email + app password
-python3 src/download_receipts.py                #  -> downloads/*.pdf|*.html
-
-# 3. parse the receipts
-python3 src/parse_receipts.py downloads         #  -> receipts.json, tender_roster.csv, reconciliation_report.csv
-
-# 4. build the ledger from the order-history pull (+ receipt detail for returns)
-python3 src/build_ledger.py                     #  -> ledger.csv
-
-# 5. open ledger.csv, label tender_roster.csv, and reconcile in QBO (docs/04)
+cd home-depot-qbo-reconcile && claude
+# then type: /hd-setup      (weekly: /hd-sync   one job: /hd-job-audit)
 ```
 
-Everything above runs from the repo root by default — inputs and outputs land next to
-`src/`, not inside it. Every script also takes `--help` if you want custom paths.
+**ChatGPT, or any assistant that can read a link and run Python:**
 
-### Or let Claude Code drive
+```text
+Read https://github.com/thefloppytaco/home-depot-qbo-reconcile/blob/main/AGENTS.md and help me set
+up the Home Depot → QuickBooks sync for my business. I'll upload the repo as a ZIP and any files you
+ask for.
+```
 
-The repo ships first-class [Claude Code](https://code.claude.com/docs) support: clone,
-run `claude`, type **`/hd-setup`**, and it walks you through everything above — then
-`/hd-runbook` handles each weekly update, and `/qbo-poster` posts to QuickBooks through
-Intuit's official MCP server (propose-first, with guardrails). Full guide:
-**[docs/08-claude-code.md](docs/08-claude-code.md)**.
+(Download the ZIP from the green **Code** button on GitHub.)
 
----
+### What your assistant needs, and what happens without it
 
-## What each script does
+| If your AI can… | It will… | Without it… |
+|---|---|---|
+| **Run Python on files** | run the scripts that do the arithmetic and draft the entries | required |
+| **Run JavaScript in your signed-in homedepot.com tab** (e.g. Claude in Chrome) | fetch the week's receipts itself | you paste one script into your browser's Console and upload the file it saves ([docs/09](docs/09-weekly-sync.md#fetching-without-a-browser-tool)) |
+| **Create expenses in QuickBooks** (a connector with write access; [docs/07](docs/07-quickbooks-connector.md)) | post the entries after you approve | you get every entry, line by line, ready to type in |
+| **Keep files between sessions** (a folder on your computer) | pick up where last week left off | save the working files at the end of each sync and hand them back next time ([AGENTS.md](AGENTS.md#where-the-working-files-live)) |
 
-| Script | Input | Output | Notes |
-| --- | --- | --- | --- |
-| `pull_orderhistory.js` | Your logged-in homedepot.com browser session | `hd_orderhistory_full.json` | Paste into the DevTools Console (see [docs/01](docs/01-pull-order-history.md)). Auto-captures your account IDs, paginates the order-history API, dedupes, and downloads the file. |
-| `download_receipts.py` | Gmail (IMAP) | `downloads/*.pdf`, `*.html` | **Incremental** — checks headers and skips receipts already saved in `downloads/`, so it's safe (and intended) to re-run periodically; pass `--refresh` to force a full re-download. Uses IMAP (not an API connector) because pulling ~2,000 × 140 KB emails that way is impractical. |
-| `parse_receipts.py` | `downloads/` | `receipts.json`, `tender_roster.csv`, `reconciliation_report.csv` | Handles both eReceipt/register receipts and H-order desk invoices. Extracts tenders, totals, project, and links returns to their original purchase. |
-| `build_ledger.py` | `hd_orderhistory_full.json` (+ `receipts.json`, optionally the legacy CSV pair via `--csv-dir`) | `ledger.csv` | **Recommended.** Builds from the authoritative API pull; uses receipts (and optionally the CSVs) to recover the project on blank-job returns. |
-| `merge_ledger.py` | Purchase-history CSVs (+ `receipts.json`) | `ledger.csv` | **Legacy/alternative.** Builds from Home Depot's CSV export instead of the API pull. |
-
-### Two builders
-
-Home Depot's CSV export **cannot include returns or cancellations** (Home Depot says so in
-the export dialog). That's why `build_ledger.py` prefers the order-history API pull, which
-*does* include them. Use `merge_ledger.py` only if you can't run the browser pull and are
-willing to lose return detail. Both write the same `ledger.csv` shape.
+It never signs in to Home Depot for you, and it never posts to QuickBooks without your
+approval.
 
 ---
 
-## Output: `ledger.csv`
-
-One row per transaction. Columns (from `build_ledger.py`):
-
-`date, type, origin, store, project, total, pretax, transaction_id, receipt_locator,
-invoices, tenders, store_credit_amt, store_credit_acct, needs_review, review_reason`
-
-- `type` — `Sale`, `Return`, or `Cancel`.
-- `project` — the job the money belongs to. For returns with no job of their own, this is
-  recovered from the original purchase and tagged `(via receipt)` or `(via order#)`.
-- `tenders` — human-readable split tenders, e.g. `Visa..0067=-130.97 | Gift/Store Credit..8841=-12.10`.
-- `store_credit_amt` / `store_credit_acct` — total routed to the shared **"HD Store Credit"**
-  clearing account (see [docs/03-how-it-works.md](docs/03-how-it-works.md)).
-- `needs_review` / `review_reason` — a human should look at these (e.g. a return whose
-  original project couldn't be found, or a cancellation).
-
-See `examples/` for tiny **synthetic** samples of the order-history JSON and the resulting
-ledger.
-
----
-
-## Privacy & safety
-
-This repo is built to be shared **without leaking your business's data**:
-
-- **No data ships in the repo.** `.gitignore` excludes `downloads/`, `receipts.json`,
-  `hd_orderhistory_full.json`, `ledger.csv`, `*_report.csv`, `tender_roster.csv`, and any
-  `Purchase_History_*` export.
-- **No secrets in code.** Your Gmail App Password lives only in `src/.gmail_creds`
-  (git-ignored); commit only `src/.gmail_creds.template`.
-- **Your Home Depot account IDs** (`USER_ID`, `customerAccountId`) are **not** in this repo —
-  the order-history guide shows you how to read your own from a logged-in session.
-- **Before you push:** run `git status` and confirm no receipt, CSV, JSON export, or creds
-  file is staged. When in doubt, `git add` files explicitly rather than `git add .`.
-
-If you fork or share your own copy, keep it this way — never commit a real
-`hd_orderhistory_full.json`, `ledger.csv`, or `.gmail_creds`.
-
----
-
-## For AI agents
-
-This repo ships a machine-readable layer alongside the human docs: **[AGENTS.md](AGENTS.md)**
-(start here — repo map and rules), **[ai/context.md](ai/context.md)** (the data dictionary
-and 12 domain invariants), **[ai/skills/](ai/skills/)** (three ready-to-adapt `SKILL.md`
-templates), and **[llms.txt](llms.txt)**. An agent with this context can run the pipeline,
-post to QuickBooks under the guardrails in
-[docs/04-quickbooks-workflow.md](docs/04-quickbooks-workflow.md), or mint new skills for
-other workflows per [ai/README.md](ai/README.md).
-
-Posting requires a QuickBooks connector that can actually **write** expenses — many
-(including some first-party ones) only do invoices and reports.
-[docs/07-quickbooks-connector.md](docs/07-quickbooks-connector.md) has the capability
-checklist, the QBO API entity mapping, and the one thing no connector can do (the bank
-feed's "For Review" / Match step — that click stays human).
-
----
-
-## Publishing this to GitHub
-
-From the repo folder:
+## See it work in 30 seconds
 
 ```bash
-git init
-git add .
-git status                       # <-- confirm NO data/creds files are listed
-git commit -m "Home Depot → QBO reconciliation pipeline"
-
-# create an empty repo on github.com first (no README/license), then:
-git remote add origin https://github.com/<you>/home-depot-qbo-reconcile.git
-git branch -M main
-git push -u origin main
+python3 examples/run_sync_demo.py
 ```
 
-`.gitignore` already keeps your data out of the commit, but always eyeball `git status`
-before the first push.
+This runs a whole week for a fictional contractor: merge, draft, the proposal you'd approve,
+close-out, and a one-job audit. You need Python 3.10+ and nothing else: no accounts, no network, no
+installs. What to look for:
+
+- a batch return credited to two jobs by its ORIG REC lines, even though its PO names only one;
+- a split-tender sale: store credit pays first, the card carries the tax;
+- a purchase on a client's card that is itemized but not posted;
+- a register return that included an online order (Home Depot lists it twice; it's booked once).
 
 ---
+
+## How a week runs
+
+```
+  your signed-in Home Depot tab                       your repo folder (private, git-ignored)
+  ─────────────────────────────                       ─────────────────────────────────────────
+  src/fetch_receipts.js  ──►  hd_bundles_<date>.jsonl ──►  merge_orderhistory.py  (what's new?)
+    every transaction since last week, with               build_ledger.py        (find originals)
+    Home Depot's item detail, the printed                  gen_entries.py         (draft entries.py)
+    receipt (PO, ORIG REC lines, store-credit                 └─ AI resolves the few "# REVIEW" lines
+    balances) and the Pro Desk order PDF's PO              entries.py  ──►  PROPOSAL.md + payloads.json
+                                                                              │
+                                              you approve ◄───────────────────┘
+                                                   │
+                         AI posts to QuickBooks ◄──┘ ──► closeout.py (line_items.csv, booking log, state)
+                         you click Match on each feed line
+```
+
+The full playbook for the AI is [ai/skills/hd-sync.SKILL.md](ai/skills/hd-sync.SKILL.md); the human
+walkthrough is [docs/09-weekly-sync.md](docs/09-weekly-sync.md).
+
+**Setting up** takes one sitting ([ai/skills/hd-setup.SKILL.md](ai/skills/hd-setup.SKILL.md)). The AI
+maps your QuickBooks accounts, cards and jobs into a private `hd-sync.json`
+([template](templates/hd-sync.example.json)), pulls your order history, and runs the first sync.
+
+**Checking a job** ([ai/skills/hd-job-audit.SKILL.md](ai/skills/hd-job-audit.SKILL.md)) builds
+everything Home Depot says one job should carry, month by month. That includes store-credit buys
+and returns that went through under another job's PO. The AI compares it with QuickBooks and
+names each difference.
+
+---
+
+## What's in the repo
+
+| Path | What it is |
+|---|---|
+| [`AGENTS.md`](AGENTS.md) | **Start here if you are an AI.** Orientation, repo map, rules. |
+| [`ai/skills/`](ai/skills/) | Step-by-step skills: `hd-setup`, `hd-sync`, `hd-job-audit`, plus older ledger-first ones. Claude Code loads them from [`.claude/skills/`](.claude/skills/). |
+| [`ai/context.md`](ai/context.md) | The data model and the bookkeeping rules that must not be broken. |
+| `src/fetch_receipts.js` | Browser script: transactions + item detail + printed receipts for a date range or one job. |
+| `src/pull_orderhistory.js` | Browser script: your whole order history (first-time setup). |
+| `src/merge_orderhistory.py` | Adds a fresh fetch to your history; lists exactly what's new; stops if anything stored disappeared. |
+| `src/build_ledger.py` | History → `ledger.csv`, one row per transaction (what returns use to find their originals). |
+| `src/gen_entries.py`, `src/hdlib.py` | Draft the week's entries; tie every number; write the QuickBooks payloads and the proposal. |
+| `src/closeout.py` | After posting: record ids, append `line_items.csv`, write the booking log and next week's state. |
+| `src/audit_job.py` | One job's Home Depot cost by month. |
+| [`docs/`](docs/) | Human guides, below. |
+| [`examples/`](examples/) | Synthetic data and the two demos. |
+
+| Guide | Covers |
+|---|---|
+| [docs/09-weekly-sync.md](docs/09-weekly-sync.md) | The weekly sync, step by step, including running the browser script yourself. |
+| [docs/10-home-depot-data.md](docs/10-home-depot-data.md) | What Home Depot's site gives you: order history, order details, printed receipts, Pro Desk PDFs, charge history. Plus the quirks. |
+| [docs/04-quickbooks-workflow.md](docs/04-quickbooks-workflow.md) | The bookkeeping rules: each situation and how it's booked, the store-credit account, cancellations, date skew. |
+| [docs/07-quickbooks-connector.md](docs/07-quickbooks-connector.md) | What a QuickBooks connector must support, how to check it, the API shapes. |
+| [docs/08-claude-code.md](docs/08-claude-code.md) | Claude Code specifics, including Intuit's official QuickBooks MCP server. |
+| [docs/01-pull-order-history.md](docs/01-pull-order-history.md) | The order-history API and the full-history pull. |
+| [docs/02](docs/02-gmail-setup.md), [03](docs/03-how-it-works.md), [05](docs/05-daily-receipt-log.md), [06](docs/06-runbook.md) | The older ledger-first pipeline: Gmail receipts, receipt parsing, a daily receipt log, the ledger runbook. |
+
+### The older ledger-first pipeline
+
+Before the weekly sync existed, this repo built a multi-year `ledger.csv` from the order history
+plus receipt emails pulled from Gmail. It's still here and still tested (`python3
+examples/run_demo.py`). It's useful for backfilling history and for reporting:
+`download_receipts.py` → `parse_receipts.py` → `build_ledger.py`, with the `hd-runbook`,
+`qbo-poster` and `cancellation-sweep` skills. The weekly sync doesn't need Gmail at all.
+
+---
+
+## Privacy and safety
+
+- **Nothing private is committed.** `.gitignore` excludes `hd-sync.json`, the order history,
+  `ledger.csv`, `line_items.csv`, booking logs, `sync/`, `audits/` and the receipt downloads. Before
+  pushing a fork, run `git status` and add files by name.
+- **Card numbers.** Home Depot's order-details API returns your full card number in one field. The
+  fetch script never keeps that field and redacts any 13–19 digit number before saving.
+- **Your Home Depot session stays yours.** The browser scripts run in your own signed-in tab and talk
+  only to homedepot.com. Your account IDs are captured in the tab, not stored in the repo.
+- **Approval before posting**, every time. A "wait" on one entry holds all of them.
+
+## For developers
+
+`pytest -q` runs the tests. CI runs them on Python 3.10, runs both demos, and syntax-checks the
+browser scripts. The scripts use only the Python standard library; the receipt parser also needs
+`pdftotext` (Poppler) for PDF receipts. Synthetic data only, everywhere. Rules for changing code
+are in [AGENTS.md](AGENTS.md).
 
 ## License
 
 MIT — see [LICENSE](LICENSE).
 
-This project is not affiliated with, endorsed by, or supported by The Home Depot or Intuit.
-"Home Depot" and "QuickBooks" are trademarks of their respective owners. The order-history
-method uses your own logged-in session to read your own account's data; use it in
-accordance with Home Depot's terms.
+Not affiliated with, endorsed by, or supported by The Home Depot or Intuit. "Home Depot" and
+"QuickBooks" are trademarks of their respective owners. The browser scripts read your own account's
+data through your own signed-in session; use them in line with Home Depot's terms.

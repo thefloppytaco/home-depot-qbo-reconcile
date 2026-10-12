@@ -1,9 +1,13 @@
 ---
 name: hd-runbook
-description: "Recurring Home Depot → QuickBooks update: refresh receipts, rebuild ledger.csv, summarize what's new, and hand off posting. Use when the user wants to update the ledger, run the weekly runbook, or sync recent Home Depot activity into QuickBooks."
+description: "Rebuild ledger.csv from order history and Gmail receipts and summarize what changed. For the weekly QuickBooks sync, use hd-sync instead."
 ---
 
 # Recurring runbook (Pass ① + handoff to Pass ②)
+
+> **Most owners want `/hd-sync`** — the weekly flow that fetches receipts straight from Home Depot,
+> drafts itemized entries and posts them after approval. This runbook is the older ledger-first path
+> (order history + Gmail receipts → `ledger.csv`), still useful for history and reporting.
 
 Follow `docs/06-runbook.md`. Run from the repo root. Summarize as you go; don't dump
 raw CSV contents into the conversation.

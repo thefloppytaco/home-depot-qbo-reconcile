@@ -31,12 +31,14 @@ card.*
 
 | Situation | How to book it |
 | --- | --- |
-| **Card purchase** | Categorize the feed item → the job's **COGS** (e.g. a "Supplies & materials" or "Tools" COGS account), tagged to the **job/project**. |
+| **Card purchase** | An **Expense** on that card → the job's **COGS** (e.g. a "Supplies & materials" or "Tools" COGS account), tagged to the **job/project**. Create it before the feed line arrives, then **Match** the line to it (categorizing the feed line by hand works too, but can't itemize). |
 | **Return refunded to a card** | **Credit Card Credit** → the job's COGS. |
 | **Cancellation** (item pulled before fulfillment) | **Credit Card Credit** → the order's job's COGS. See *Cancellations* below. |
 | **Store credit earned** (a return loaded onto a store-credit card) | **Journal Entry / Deposit** into your **"HD Store Credit"** clearing account (debit), crediting the job's COGS. |
 | **Store credit spent** (store-credit tender on a purchase) | **Expense from "HD Store Credit"** → the job's COGS. |
 | **Mixed same-receipt** (return job A + buy job B, pay the difference) | One **split** transaction: positive line(s) to job B, negative line(s) to job A; the total equals the card charge. |
+| **Batch return** (one return, items from several originals) | One credit (card) or journal entry (store credit) per refund leg, with **one line group per ORIG REC original**, each on the job that original was booked to — whatever PO the return row shows. |
+| **Split tender** (store credit + card on one purchase) | Store credit pays for items in receipt order; the card entry carries the rest of the items **and all the tax**, so it equals the card charge. |
 
 ### The store-credit clearing account
 
@@ -52,10 +54,11 @@ set an opening balance (see *Opening balance* below).
 
 ## Projects = customers
 
-In QBO, jobs are modeled as **projects**, and a project belongs to a **customer**. Every
-Home Depot line carries the job (`PO/JOB NAME`). When you book, set the customer reference to
-the project's customer and QBO resolves the project. Keep your own job → customer/project ID
-map in `templates/accounts.example.yml`; look up new jobs as they appear.
+In QBO, jobs are modeled as **projects**, and a project belongs to a **customer** (in the API a
+project is a sub-customer with its own id). Every Home Depot line carries the job (`PO/JOB NAME`).
+When you book, choose the **project** in the Customer/project field (its id, in the API); QBO
+knows its parent customer. Keep your job → id map in `hd-sync.json` (weekly sync) or
+`accounts.yml` (older skills); look up new jobs as they appear.
 
 ---
 
@@ -85,6 +88,12 @@ wrong). Each return prints one or more `ORIG REC:` references. Before you park a
    a job; find it by amount + date (±3 days) and reuse that job. Frequently the quickest path.
 
 Only a return that misses all four rungs goes to a human.
+
+**A batch return's PO means nothing.** At the counter, one return often covers items bought for
+several jobs, under whatever PO was typed. Credit each `ORIG REC` block's items and tax to the
+job its original was **booked** to. In one real audit, five refunds sat on four wrong jobs
+because the return rows' POs had been trusted. The weekly sync does this automatically
+([09](09-weekly-sync.md)).
 
 **Book returns off line items, not just the PO/JOB.** Keep each receipt's line items (SKU,
 amount, and the `ORIG REC` each belongs to). A returned item then traces to the exact original

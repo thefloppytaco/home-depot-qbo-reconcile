@@ -174,21 +174,21 @@ def test_build_ledger_without_receipts_flags_return_for_review(tmp_path):
 def test_return_resolves_via_order_history_spine(tmp_path):
     """Ladder rung 2: the original sale is only in the order-history spine (its receipt
     was never emailed), but the return still recovers its project via the ORIG REC on
-    the parsed return receipt. This is the shape of the 08/14/25 shower-faucet case."""
+    the parsed return receipt. A long-ago original, never emailed."""
     orderhistory = {
         "pulled": 2,
         "rows": [
             {   # original sale — present ONLY in the spine, not in any receipt corpus
                 "date": "2025-08-14", "type": "Sale", "origin": "#8119, Faraway", "store": 8119,
-                "job": "2708 WILLOW GLEN", "total": 193.41, "pretax": 182.46, "tx": 5001,
+                "job": "789 EXAMPLE LN", "total": 193.41, "pretax": 182.46, "tx": 5001,
                 "receipt": "00015-58022", "invoices": [],
-                "tenders": [{"net": "AX", "last4": "1018", "amt": "-193.41"}],
+                "tenders": [{"net": "AX", "last4": "4444", "amt": "-193.41"}],
             },
             {   # the return, months later, with a blank job
                 "date": "2026-07-14", "type": "Return", "origin": "#2584, Town", "store": 2584,
                 "job": "", "total": -193.41, "pretax": -182.46, "tx": 5673,
-                "receipt": "00018-56731", "invoices": [],
-                "tenders": [{"net": "AX", "last4": "1018", "amt": "193.41"}],
+                "receipt": "00018-99991", "invoices": [],
+                "tenders": [{"net": "AX", "last4": "4444", "amt": "193.41"}],
             },
         ],
     }
@@ -197,7 +197,7 @@ def test_return_resolves_via_order_history_spine(tmp_path):
         "datetime": "07/14/26 02:52 PM", "total": -193.41,
         "project": None, "orig_recs": ["8119|15|58022|08/14/25"],
         "resolved_projects": [], "unresolved_orig_recs": ["8119|15|58022|08/14/25"],
-        "tenders": [{"last4": "1018", "type": "AMEX", "amount": 193.41}],
+        "tenders": [{"last4": "4444", "type": "AMEX", "amount": 193.41}],
         "line_items": [],
     }]
     oh_path = tmp_path / "oh.json"
@@ -213,5 +213,5 @@ def test_return_resolves_via_order_history_spine(tmp_path):
     with open(ledger_path, newline="") as f:
         rows = {r["date"]: r for r in csv.DictReader(f)}
     ret = rows["2026-07-14"]
-    assert ret["project"] == "2708 WILLOW GLEN (via order-history)"
+    assert ret["project"] == "789 EXAMPLE LN (via order-history)"
     assert ret["needs_review"] == ""

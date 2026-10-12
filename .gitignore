@@ -8,6 +8,7 @@ src/gmail_creds.txt
 # Your private account/project/card map
 accounts.yml
 templates/accounts.yml
+hd-sync.json
 
 # Claude Code local state — .mcp.json can contain OAuth secrets if you use
 # `claude mcp add --scope project`; keep it out of public forks (docs/08)
@@ -25,6 +26,14 @@ tender_roster.csv
 booking_log_*.csv
 Purchase_History_*.csv
 .hd-work/
+# weekly sync + job audits (src/fetch_receipts.js -> merge -> gen_entries -> closeout)
+sync/
+audits/
+hd_bundles*.jsonl
+line_items.csv
+line_items.backup-*.csv
+hd_orderhistory_full.backup-*.json
+hd_sync_state.json
 *.pdf
 *.pdf.txt
 examples/demo-output/
@@ -32,6 +41,7 @@ examples/demo-output/
 # Allow the synthetic samples through
 !examples/*.csv
 !examples/*.json
+!examples/*.jsonl
 
 # ── Python / OS cruft ──────────────────────────────────────
 __pycache__/

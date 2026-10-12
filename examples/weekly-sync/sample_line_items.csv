@@ -1,0 +1,14 @@
+date,receipt_locator,order_number,store,job,card,type,item_desc,qty,unit_price,line_total,return_by,qbo_id
+2026-09-18,00050-31311,,0,123 Example St,Visa ..1111,Sale,Porcelain tile 12x24 (box) [sku 1000101],2,35.00,70.00,2026-12-17,5001
+2026-09-18,00050-31311,,0,123 Example St,Visa ..1111,Sale,Thinset mortar 50 lb [sku 1000102],1,30.00,30.00,2026-12-17,5001
+2026-09-18,00050-31311,,0,123 Example St,Visa ..1111,Sale,Sales tax,1,6.00,6.00,2026-12-17,5001
+2026-09-25,00051-33335,,0,456 Sample Ave,Amex ..4444,Sale,Vanity top 37 in. [sku 1000103],1,200.00,200.00,2026-12-24,5005
+2026-09-25,00051-33335,,0,456 Sample Ave,Amex ..4444,Sale,Sales tax,1,12.00,12.00,2026-12-24,5005
+2026-09-26,00088-30017,H0000-222222,0,123 Example St,Amex ..0000,Sale,Shower valve trim kit [sku 1000105],1,29.96,29.96,2026-12-25,5020
+2026-09-26,00088-30017,H0000-222222,0,123 Example St,Amex ..0000,Sale,Sales tax,1,1.80,1.80,2026-12-25,5020
+2026-09-27,00053-40014,,0,456 Sample Ave,Visa ..1111,Sale,Silicone caulk (10 pack) [sku 1000106],1,50.00,50.00,2026-12-26,5015
+2026-09-27,00053-40014,,0,456 Sample Ave,Visa ..1111,Sale,Sales tax,1,3.00,3.00,2026-12-26,5015
+2026-09-30,00089-50019,H0000-333333,0,456 Sample Ave,Amex ..4444,Sale,Medicine cabinet 24 in. [sku 1000107],2,50.00,100.00,2026-12-29,5021
+2026-09-30,00089-50019,H0000-333333,0,456 Sample Ave,Amex ..4444,Sale,Sales tax,1,6.00,6.00,2026-12-29,5021
+2026-10-02,00050-12340,,0,123 Example St,Visa ..1111,Sale,Grout 10 lb [sku 1000104],2,25.00,50.00,2026-12-31,5010
+2026-10-02,00050-12340,,0,123 Example St,Visa ..1111,Sale,Sales tax,1,3.00,3.00,2026-12-31,5010

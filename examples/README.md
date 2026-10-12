@@ -3,7 +3,29 @@
 Fictional data — safe to commit. They show the shapes the tools read and write, and the
 whole pipeline is runnable end to end against them.
 
-## Run the demo
+## The weekly-sync demo
+
+```
+python3 examples/run_sync_demo.py
+```
+
+One whole week for a fictional contractor, start to finish: it builds a throwaway workspace in
+`demo-output/weekly-sync/` from the files in [`weekly-sync/`](weekly-sync/), then runs merge →
+ledger → draft → proposal → (simulated) posting → close-out → a one-job audit. Python only; no
+credentials, network or QuickBooks.
+
+- **`weekly-sync/sample_bundles.jsonl`** — the shape `src/fetch_receipts.js` writes: this week's
+  transactions with order details and parsed printed receipts. It covers a discounted sale, a
+  split-tender sale, a client's card, a batch return whose PO is another job's, a card return, a Pro
+  Desk order with a derived fee line, a cancellation, a register return that included an online order
+  (listed twice by Home Depot), and an online-order return with no printed block tax.
+- **`weekly-sync/sample_history.json`**, **`sample_line_items.csv`**, **`sample_hd_sync_state.json`** —
+  the business's state after last week's sync (originals the returns point at, and how they were booked).
+- **`weekly-sync/sample_hd-sync.json`** — a filled-in config (fake ids).
+
+`tests/test_sync.py` runs the same week and checks every number.
+
+## The ledger-first demo
 
 ```
 python3 examples/run_demo.py

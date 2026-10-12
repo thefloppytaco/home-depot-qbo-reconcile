@@ -1,6 +1,6 @@
 ---
 name: qbo-poster
-description: "Post a window of ledger.csv rows into QuickBooks Online, split by project, including the store-credit and return legs the bank feed never shows. Proposes first, posts only after explicit approval. Use when the user wants to post, book, or enter Home Depot transactions into QuickBooks."
+description: "Post a window of ledger.csv rows to QuickBooks split by job, including store-credit and return legs. Older ledger-first path; for weekly syncing use hd-sync."
 ---
 
 # QBO posting run (Claude Code entry point)
