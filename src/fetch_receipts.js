@@ -125,9 +125,11 @@
   };
   const ordersIn = j => j.orders || j.orderHistory || (j.data && j.data.orders) ||
     Object.values(j || {}).find(v => Array.isArray(v) && (!v.length || typeof v[0] === 'object')) || [];
-  function windows(from, to) {   // <=24-month windows, anchored at the END so the newest window is always whole
+  // Always ask for Home Depot's own two-year window and stop paging once rows predate FROM: a narrow date range has
+  // come back as an "empty success" (orderCount 0) at times, which must never be read as "no new transactions".
+  function windows(from, to) {
     const out = []; let end = to;
-    while (end >= from) { let start = shift(end, -24, 1); if (start < from) start = from; out.push([start, end]); end = shift(start, 0, -1); }
+    while (end >= from) { const start = shift(end, -24, 1); out.push([start, end]); end = shift(start, 0, -1); }
     return out;
   }
   async function pullWindow(ids, H, start, end) {
@@ -150,6 +152,7 @@
       }
       got.push(...orders);
       if (total !== null && got.length >= total) break;
+      if (dateOf(orders[orders.length - 1].salesDate) < FROM) break;   // sorted newest first: the rest are older than FROM
       page += 1; await sleep(300);
     }
     return got;
