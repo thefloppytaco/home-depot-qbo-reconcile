@@ -131,3 +131,18 @@ Everything in [AGENTS.md](../AGENTS.md) applies, plus two connector-specific one
   a delete; an agent should treat them as off-limits unless the user explicitly asks.
 - Test the loop on a QBO **sandbox company** or a tiny date window first: post two or
   three entries, verify them in the UI, then widen the window.
+
+## Connector quirks seen in practice
+
+Seen on one QuickBooks MCP connector; others may behave differently, so treat these as things to
+check, not as facts about every server.
+
+- **Params may need double nesting**: `{params: {purchase | journalEntry | id | criteria: …}}`. Sending
+  them flat fails with a misleading `SAXParseException`, which looks like malformed XML rather than a
+  wrong shape.
+- **A journal entry's `TotalAmt` reads 0**, so an amount probe (the dedupe pass's search by amount)
+  never finds a journal entry. Look for store-credit journal entries by date range, then check their lines.
+- **`AccountRef`, `PrivateNote` and `EntityRef` aren't queryable.** Query by date, then filter the
+  results yourself.
+- **Paging with `limit` / `offset` isn't airtight.** Don't conclude something is missing from a paged
+  sweep alone; confirm with a narrower query or the register before acting on its absence.

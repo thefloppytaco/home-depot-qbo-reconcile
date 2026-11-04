@@ -24,6 +24,10 @@ last-4 + amount), invoice and order numbers. Full field list and paging: [01](01
 - A **batch return** appears as one row with tenders plus tender-less sub-rows. A register return
   that includes an **online / Pro Desk order** appears twice with tenders: the whole receipt, and an
   order-return row repeating the order's part. Book the receipt once.
+- A tender-less **$0 row** is not always a sub-row. It can be a **suspended transaction**: the
+  register rang something up, then suspended it, and nothing was charged. `gen_entries.py` labels
+  every tender-less row `sub-row (no tenders)`, so a suspended one reads as part of a batch return.
+  Check the printed e-receipt for `TRANSACTION SUSPENDED`. If it's there, there is nothing to book.
 - `Cancel` rows are zeroed: they say *that* something was canceled, not how much.
 
 ## 2. `orderdetails` — the items
@@ -69,6 +73,14 @@ Body: `{"customerAccountId", "encryptedBigReceiptRequest"}`, where the key comes
 details' `encryptedBigReceiptRequests[orderNumber]`. It returns a PDF. Desk and online orders have no
 register receipt, so this is where their printed PO lives: in the PDF's text it's on the line
 **before** the "PO / Job Name" label. The line after is the fulfillment type, e.g. "Carryout".
+
+### Pro online orders (order numbers starting `WK`)
+
+These come back from `orderdetails` as an **empty shell** (no items), and there is no receipt image
+(`NO_ENC`: no encrypted key to ask `receipt/view` for). Itemize from the **order-confirmation email**
+instead: search the mailbox for the order number; the subject is along the lines of "Order confirmed".
+The job comes from the PO on that order. Don't treat the row as unexplained and don't guess the
+items. If the email can't be found, hold the row and ask.
 
 ## 5. Charge history (`chargeTransactions` in the order details)
 

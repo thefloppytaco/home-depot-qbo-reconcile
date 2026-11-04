@@ -115,6 +115,12 @@ an entry: `entries.py` refuses a checklist row that has neither an entry nor a h
 - **Several refund legs with no unique split** → each group goes back to the tender it was bought
   with; check the originals' tenders in `ledger.csv`, or ask.
 - **Blank or nonsense PO** → ask.
+- **Order number starting `WK`** (Pro online order) → empty order details and no receipt image. Itemize
+  from the order-confirmation email and take the job from its PO; no email → `hold(...)`
+  ([`docs/10`](../../docs/10-home-depot-data.md#pro-online-orders-order-numbers-starting-wk)).
+- **Tender-less $0 row** → the draft calls it a sub-row, but it may be a suspended transaction. Look for
+  `TRANSACTION SUSPENDED` on the e-receipt; if present, nothing to book
+  ([`docs/10`](../../docs/10-home-depot-data.md#1-orderhistory--the-list)).
 - **Cancel rows** (bucket `cancel`) get no entry: their refund only shows in the order's charge history.
   `closeout.py` keeps them in `hd_sync_state.json` `open_cancellations`; when the card credit shows up,
   book it per [`cancellation-sweep.SKILL.md`](cancellation-sweep.SKILL.md) and remove it from the list.
@@ -142,6 +148,17 @@ right before posting:
 
 An existing match: drop that entry from the proposal (or propose re-lining the existing one if its job
 is wrong — a re-line that keeps total and date does not break a bank match).
+
+**Same-amount entries are not automatically duplicates.** Count the Home Depot transactions first: two
+purchases of one amount can both be real.
+
+**Feed-added twins.** If someone pressed **Add** in the bank feed, a second entry now sits beside the
+pre-created one. Keep the **matched** entry: QuickBooks refuses to delete it (error 6480). Delete the
+unmatched twin, then update the matched entry with the correct lines.
+
+**Re-lining an existing entry.** The update needs the entry's Id + SyncToken and the **full** body, not
+just the changed lines. A matched entry is safe to re-line while its total and date stay the same. If a
+line sits on a **deleted customer**, QuickBooks rejects it: move that line to the active customer record.
 
 ## 6. Propose, get approval, post
 
