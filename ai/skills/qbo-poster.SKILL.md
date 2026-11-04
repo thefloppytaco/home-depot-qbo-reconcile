@@ -5,10 +5,15 @@ description: "Post a window of ledger.csv rows into QuickBooks Online, split by 
 
 # QBO posting run (template)
 
+> **For weekly syncing, use [`hd-sync.SKILL.md`](hd-sync.SKILL.md)** — it fetches each receipt's items
+> straight from Home Depot and drafts the exact QuickBooks entries for you. This skill is the older
+> ledger-first path: posting from `ledger.csv` when you don't have receipt bundles (e.g. a backfill of
+> old months).
+
 Turn rows of `ledger.csv` into correctly-booked QuickBooks Online entries. This is
 "Pass ②" of the [runbook](../../docs/06-runbook.md) as an agent skill. It assumes a
 QuickBooks connector (or a human driving QBO) and read access to the repo's outputs.
-Read [`../context.md`](../context.md) first — invariants 1–12 all apply here.
+Read [`../context.md`](../context.md) first — every invariant applies here.
 
 This is a genericized template: fill every `<...>` from your private `accounts.yml`
 (copied from [`../../templates/accounts.example.yml`](../../templates/accounts.example.yml)).
@@ -68,7 +73,9 @@ Do this once, before Step 1 of the first-ever run (setup guide for the user:
      the job's COGS. The feed line will offer a 1-click **Match**.
    - Return refunded to a card → **Credit Card Credit** → the original job's COGS
      (the ledger's `project` column already resolved it; `(via receipt)` /
-     `(via order#)` tags tell you how).
+     `(via order#)` tags tell you how). A batch return can hold items from several
+     jobs: each ORIG REC original's items credit **the job that original was booked
+     to** — never the return row's own PO, which is arbitrary on a batch return.
    - Store credit **earned** (return to a store-credit card) → JE/Deposit **into**
      the "HD Store Credit" account, crediting the job's COGS.
    - Store credit **spent** → **Expense from** "HD Store Credit" → the job's COGS.
@@ -108,6 +115,7 @@ Do this once, before Step 1 of the first-ever run (setup guide for the user:
 - Work `returns_needing_lookup.csv` (step 4) **before** handing any return to a human —
   a Gmail/QBO hit is cheap and the original is often already in the books.
 - The cutoff only moves forward; history before it is read-only.
-- Card legs must equal what actually hit each card (golden rule).
+- Card legs must equal what actually hit each card (golden rule): book the card charge,
+  not the row total, when they differ — and never plug a difference.
 - If the account map is missing an ID (new job, new card in `tender_roster.csv`),
   stop and ask rather than defaulting.

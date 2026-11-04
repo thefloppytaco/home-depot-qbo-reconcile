@@ -28,6 +28,15 @@
  *   5. When it's done, your browser downloads hd_orderhistory_full.json. Move it into the repo
  *      root (next to src/) — that's where build_ledger.py looks for it.
  *
+ * FOR AI AGENTS (a browser tool running this for the user)
+ * -------------------------------------------------------------------------------------------------
+ * Set overrides before running instead of editing the file:
+ *   window.HD_PULL = {start: "2018-01-01", end: "", output: "page"}
+ * output "page" skips the download: poll window.__hd_pull.status until it starts with "done",
+ * then read window.__hd_pull.chunk(0), chunk(1), ... and save them, joined in order, as
+ * hd_orderhistory_full.json. The IDs it finds are kept in window.__hd_ids (and this tab's
+ * sessionStorage) so src/fetch_receipts.js can reuse them without capturing again.
+ *
  * PRIVACY
  * -------------------------------------------------------------------------------------------------
  * This script runs entirely inside your own logged-in browser tab. It loads no external
@@ -53,10 +62,12 @@
   //   (b) AUTO-CAPTURE:  leave either one blank and this script will watch your browser's own
   //                      requests for the next orderhistory call and pull the IDs out of it.
   // ===================================================================================================
-  const USER_ID = "";              // from the request path: /user/{USER_ID}/orderhistory
-  const CUSTOMER_ACCOUNT_ID = "";  // from the request body: "customerAccountId"
-  const START_DATE = "2018-01-01"; // YYYY-MM-DD — pull everything from here forward
-  const END_DATE = "";             // YYYY-MM-DD — empty means "today"
+  const OVERRIDE = (typeof window !== "undefined" && window.HD_PULL) || {};  // see FOR AI AGENTS above
+  const USER_ID = OVERRIDE.userId || "";              // from the request path: /user/{USER_ID}/orderhistory
+  const CUSTOMER_ACCOUNT_ID = OVERRIDE.customerAccountId || "";  // from the request body: "customerAccountId"
+  const START_DATE = OVERRIDE.start || "2018-01-01"; // YYYY-MM-DD — pull everything from here forward
+  const END_DATE = OVERRIDE.end || "";             // YYYY-MM-DD — empty means "today"
+  const OUTPUT = OVERRIDE.output || "download";    // "download" (people) or "page" (AI browser tools)
   const PAGE_DELAY_MS = 400;       // pause between page requests (also used as the retry backoff)
 
   // Internal constants — no need to edit these.
@@ -67,6 +78,17 @@
   const MAX_WINDOW_MONTHS = 24; // live API 400s on a single request spanning more than ~25 months
   const B2B_DATE_RANGE_ERROR_CODE = "B2B_ORDER_HISTORY_ERR_8013"; // API's code for "range too wide"
 
+  const STATUS = (window.__hd_pull = {
+    status: "starting",
+    chunks: [],
+    chunk(k) {
+      const c = this.chunks[k] ?? "";
+      let pre = document.getElementById("hd-dump");
+      if (!pre) { document.body.innerHTML = '<article><pre id="hd-dump"></pre></article>'; pre = document.getElementById("hd-dump"); }
+      pre.textContent = c || "(no such chunk)";
+      return c;
+    },
+  });
   function logInfo(...args) { console.log(LOG_PREFIX, ...args); }
   function logWarn(...args) { console.warn(LOG_PREFIX, ...args); }
   function logError(...args) { console.error(LOG_PREFIX, ...args); }
@@ -114,17 +136,18 @@
   }
 
   /** Splits [startDate, endDate] (inclusive, "YYYY-MM-DD") into contiguous, non-overlapping
-   *  windows of at most maxMonths months each, oldest window first. The live API rejects any
-   *  single request spanning more than ~25 months, so every window generated here must fit
-   *  under that ceiling. */
+   *  windows of at most maxMonths months each, NEWEST window first. Windows are anchored at the
+   *  end date, so the most recent window is always a whole one and only the oldest is short.
+   *  The live API rejects any single request spanning more than ~25 months, so every window
+   *  generated here must fit under that ceiling. */
   function generateDateWindows(startDate, endDate, maxMonths) {
     const windows = [];
-    let winStart = startDate;
-    while (winStart <= endDate) {
-      const uncappedEnd = addDaysISO(addMonthsISO(winStart, maxMonths), -1);
-      const winEnd = uncappedEnd > endDate ? endDate : uncappedEnd;
+    let winEnd = endDate;
+    while (winEnd >= startDate) {
+      const uncappedStart = addDaysISO(addMonthsISO(winEnd, -maxMonths), 1);
+      const winStart = uncappedStart < startDate ? startDate : uncappedStart;
       windows.push({ startDate: winStart, endDate: winEnd });
-      winStart = addDaysISO(winEnd, 1);
+      winEnd = addDaysISO(winStart, -1);
     }
     return windows;
   }
@@ -321,10 +344,10 @@
     };
   }
 
-  function buildBody(pageNumber, startDate, endDate, customerAccountId) {
+  function buildBody(pageNumber, startDate, endDate, customerAccountId, pageSize) {
     return JSON.stringify({
       orderHistoryRequest: {
-        pageSize: 500,
+        pageSize: pageSize || 500,
         pageNumber,
         startDate,
         endDate,
@@ -342,14 +365,14 @@
   /** POSTs one page. Retries once on a network-level failure (e.g. a dropped connection);
    *  does NOT retry on HTTP error responses — those are reported immediately with a clear,
    *  specific message instead. */
-  async function fetchPage(userId, customerAccountId, pageNumber, startDate, endDate, capturedHeaders) {
+  async function fetchPage(userId, customerAccountId, pageNumber, startDate, endDate, capturedHeaders, pageSize) {
     const url = `${ENDPOINT_ROOT}/${encodeURIComponent(userId)}/orderhistory`;
     const doFetch = () =>
       fetch(url, {
         method: "POST",
         headers: buildHeaders(capturedHeaders),
         credentials: "include",
-        body: buildBody(pageNumber, startDate, endDate, customerAccountId),
+        body: buildBody(pageNumber, startDate, endDate, customerAccountId, pageSize),
       });
 
     let res;
@@ -481,6 +504,10 @@
         last4: t.value ?? t.last4 ?? "",
         amt: t.amount,
       })),
+      // extra keys (build_ledger.py ignores them; merge_orderhistory.py and the sync tools use them)
+      register: o.registerNumber ?? "",
+      txc: o.transactionIdWithCheckDigit ?? "",
+      order: o.orderNumber ?? "",
     };
   }
 
@@ -488,7 +515,9 @@
     const seen = new Set();
     const out = [];
     for (const r of rows) {
-      const key = `${r.tx}|${r.date}|${r.total}|${r.store}`;
+      // register is part of the key: two registers in one store can issue the same transaction
+      // number on the same day for the same amount, and both are real.
+      const key = `${r.tx}|${r.date}|${r.total}|${r.store}|${r.register}|${r.order}`;
       if (seen.has(key)) continue;
       seen.add(key);
       out.push(r);
@@ -523,6 +552,7 @@
   async function fetchWindow(userId, customerAccountId, win, capturedHeaders) {
     let reportedTotal = null;
     let pageNumber = 1;
+    let pageSize = 500; // drops to 60 if the API answers 500 with an empty success (seen in 2026)
     const orders = [];
 
     while (pageNumber <= SAFETY_MAX_PAGES) {
@@ -530,7 +560,7 @@
 
       let json;
       try {
-        json = await fetchPage(userId, customerAccountId, pageNumber, win.startDate, win.endDate, capturedHeaders);
+        json = await fetchPage(userId, customerAccountId, pageNumber, win.startDate, win.endDate, capturedHeaders, pageSize);
       } catch (err) {
         if (pageNumber === 1 && err && err.httpStatus === 400) {
           const reason = `HTTP 400 on page 1 (likely ${B2B_DATE_RANGE_ERROR_CODE} — "Start date and ` +
@@ -554,6 +584,13 @@
         `(found at "${path ?? "?"}"). ${orders.length + pageOrders.length} collected in this window so far.`
       );
 
+      if (pageOrders.length === 0 && pageNumber === 1 && pageSize === 500 && reportedTotal !== 0) {
+        logWarn(`window ${win.startDate} .. ${win.endDate}: page size 500 came back empty — retrying at 60.`);
+        pageSize = 60;
+        reportedTotal = null;
+        await sleep(PAGE_DELAY_MS);
+        continue;
+      }
       if (pageOrders.length === 0) {
         logInfo(`window ${win.startDate} .. ${win.endDate}: page ${pageNumber} returned 0 orders — window done.`);
         return { orders, pagesFetched: pageNumber, skipped: false };
@@ -633,9 +670,20 @@
       })),
     ]);
 
-    const result = { pulled: rows.length, rows };
+    const result = { pulled: new Date().toISOString(), start: startDate, end: endDate, count: rows.length, rows };
     window.__hd_orderhistory = result;
+    if (OUTPUT === "page") {
+      // AI browser tools filter text that looks like URL query data; no field here needs ? & or =
+      const text = JSON.stringify(result).replace(/[?&=]/g, " ");
+      STATUS.chunks = [];
+      for (let k = 0; k < text.length; k += 25000) STATUS.chunks.push(text.slice(k, k + 25000));
+      STATUS.status = `done: ${rows.length} rows in ${STATUS.chunks.length} chunk(s) — read window.__hd_pull.chunk(0..${STATUS.chunks.length - 1}) and save them, joined, as ${OUTPUT_FILENAME}`;
+      STATUS.chunk(0);
+      logInfo(STATUS.status);
+      return result;
+    }
     downloadJSON(result, OUTPUT_FILENAME);
+    STATUS.status = `done: ${rows.length} rows — downloaded ${OUTPUT_FILENAME}`;
 
     logInfo(`downloaded ${OUTPUT_FILENAME} — move it into the repo root, next to src/.`);
     logInfo(
@@ -652,13 +700,27 @@
     let customerAccountId = CUSTOMER_ACCOUNT_ID;
     let capturedHeaders = null;
     if (!userId || !customerAccountId) {
-      const captured = await autoCaptureIds({ userId, customerAccountId });
-      userId = captured.userId;
-      customerAccountId = captured.customerAccountId;
-      capturedHeaders = captured.headers || null;
+      // reuse IDs an earlier run (this script or fetch_receipts.js) found in this tab
+      let known = window.__hd_ids || null;
+      try { known = known || JSON.parse(sessionStorage.getItem("hdqbo_ids") || "null"); } catch (e) { /* ignore */ }
+      if (known && known.userId && known.customerAccountId) {
+        userId = known.userId;
+        customerAccountId = known.customerAccountId;
+        logInfo("reusing the IDs found earlier in this tab.");
+      } else {
+        STATUS.status = "WAITING FOR IDS — click to page 2 of Purchase History (or change its date filter) once";
+        const captured = await autoCaptureIds({ userId, customerAccountId });
+        userId = captured.userId;
+        customerAccountId = captured.customerAccountId;
+        capturedHeaders = captured.headers || null;
+      }
     }
+    window.__hd_ids = { userId, customerAccountId };
+    try { sessionStorage.setItem("hdqbo_ids", JSON.stringify(window.__hd_ids)); } catch (e) { /* ignore */ }
+    STATUS.status = "pulling";
     await runPull(userId, customerAccountId, capturedHeaders);
   } catch (err) {
+    STATUS.status = "FAILED: " + ((err && err.message) || err);
     logError("pull failed — no file was downloaded.");
     logError((err && err.message) || err);
   }

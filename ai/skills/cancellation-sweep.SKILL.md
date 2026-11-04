@@ -15,6 +15,15 @@ data model: [`../context.md`](../context.md) (invariants 6–8).
 Assumes a QuickBooks connector (read For-Review/registers) and the repo's `ledger.csv`.
 Resolving amounts needs the Home Depot Pro site (a human, or a browser tool, signed in).
 
+## Faster: the charge history
+
+`src/fetch_receipts.js` saves each order's **charge history** (`od.ct`) and Home Depot's current order
+total (`od.grand`). `gen_entries.py` flags every sale whose current total is below what the card was
+charged (`# CHECK: Home Depot's order total is now …`): that difference is a cancellation or price
+adjustment, and a card credit for it is coming (or came). For an older order, fetch it with
+`window.HD_FETCH = {from: '<order date>', job: '<order number>'}` and compare `od.grand` with the row
+total. Use the steps below for credits that still have no explanation.
+
 ## Steps
 
 1. **Collect candidates.** From QBO For Review (and recent register history) on every

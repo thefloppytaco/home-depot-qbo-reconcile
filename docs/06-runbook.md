@@ -1,4 +1,8 @@
-# 06 · Recurring update runbook
+# 06 · Recurring update runbook (ledger-first)
+
+> **For the weekly QuickBooks sync, use [09-weekly-sync.md](09-weekly-sync.md).** It fetches each
+> receipt's items straight from Home Depot and drafts the entries for you. This runbook is the older
+> ledger-first loop, still useful for rebuilding history and for reporting.
 
 Keep QuickBooks current in two passes. Run it weekly, or whenever the QBO "For Review" list
 starts piling up with Home Depot lines.

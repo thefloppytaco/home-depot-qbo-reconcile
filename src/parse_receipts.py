@@ -157,8 +157,8 @@ def parse_register_receipt(txt, fn):
         rec["card_balance"] = money(cb.group(1))
 
     # Tender lines, scanned line-by-line so we catch BOTH styles on one receipt:
-    #   inline amount:   XXXXXXXX6841 STORE CREDIT  0.94
-    #   amount on next line (cards): XXXXXXXX0641 VISA \n  USD$ 58.26
+    #   inline amount:   XXXXXXXX2222 STORE CREDIT  0.94
+    #   amount on next line (cards): XXXXXXXX1111 VISA \n  USD$ 58.26
     TYPE = r'(STORE CREDIT|AMERICAN EXPRESS|AMEX|VISA|MASTERCARD|DISCOVER|DEBIT|GIFT(?: CARD)?)'
     lines = txt.splitlines()
     for i, line in enumerate(lines):
@@ -201,7 +201,7 @@ def parse_customer_receipt(txt, fn):
     tm = re.search(r'(?:Order Total|TOTAL)\s*\$?\s*([\d,]+\.\d{2})', txt)
     if tm:
         rec["total"] = money(tm.group(1))
-    # Payment Method block: "American Express 1000 Charged $264.89"
+    # Payment Method block: "American Express 0000 Charged $264.89"
     for pm in re.finditer(r'(American Express|Visa|Mastercard|MasterCard|Discover|Store Credit)\s+(\d{4})\s+Charged\s+\$?([\d,]+\.\d{2})', txt):
         rec["tenders"].append({"last4": pm.group(2), "type": pm.group(1).upper(),
                                "amount": money(pm.group(3))})

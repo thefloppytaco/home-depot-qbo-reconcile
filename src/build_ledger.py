@@ -62,8 +62,7 @@ def _norm_locator(store, reg, txn, date):
 def build_spine_index(rows):
     """Normalized original-sale locator -> job, built from the order-history spine itself.
     This is the ladder's rung 2: a return's ORIG REC can be resolved against the full
-    2020+ purchase history even when the original receipt was never emailed or parsed.
-    (The 08/14/25 shower-faucet original that stalled rcpt 00018-56731 lives here.)"""
+    2020+ purchase history even when the original receipt was never emailed or parsed."""
     idx = {}
     for o in rows:
         typ = o.get("type", "")

@@ -1,6 +1,6 @@
 ---
 name: cancellation-sweep
-description: "Find and resolve Home Depot 'ghost' card credits — cancellations that produce no receipt and no usable order-history row — and book them to the right project. Use when the user has unexplained Home Depot card credits or asks to sweep for cancellations."
+description: "Find Home Depot card credits with no receipt (cancellations, price adjustments) and book them to the right job. Use for unexplained Home Depot credits."
 ---
 
 # Cancellation sweep (Claude Code entry point)

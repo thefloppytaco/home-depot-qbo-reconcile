@@ -1,5 +1,8 @@
 # 02 · Gmail setup for `download_receipts.py`
 
+> Optional. The weekly sync ([09](09-weekly-sync.md)) gets receipts straight from Home Depot and
+> doesn't need Gmail. This is for the older ledger-first pipeline, and for finding very old receipts.
+
 `download_receipts.py` connects to Gmail over **IMAP** and downloads every Home Depot
 receipt email (the PDF attachment, or the HTML body as a fallback) into `downloads/`.
 

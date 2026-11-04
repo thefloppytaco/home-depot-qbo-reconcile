@@ -1,25 +1,39 @@
 # home-depot-qbo-reconcile
 
-> Turns a business's Home Depot purchase/return history into a per-project expense
-> ledger and reconciles it into QuickBooks Online — including the store-credit legs,
-> returns, and cancellations that never appear in a bank feed.
+> Keeps a contractor's Home Depot spending booked to the right job in QuickBooks Online. Each week
+> an AI fetches every Home Depot purchase and return (with item detail and the printed receipt),
+> drafts itemized QuickBooks entries per job — including the store-credit purchases, store-credit
+> refunds, batch returns and cancellations a bank feed never explains — and posts them after the
+> owner approves, so every bank-feed line is a one-click Match.
 
 ## Start here
 
-- [AGENTS.md](AGENTS.md): orientation, repo map, and the rules for agents
-- [ai/context.md](ai/context.md): the data dictionary and the 12 domain invariants
-- [ai/README.md](ai/README.md): skill templates and how to mint new ones
+- [AGENTS.md](AGENTS.md): what to do for each request, what you need, where files live, the rules
+- [ai/context.md](ai/context.md): every data shape and the 16 bookkeeping invariants
 
-## Skills (ready-to-adapt templates)
+## Skills
 
-- [ai/skills/receipt-log.SKILL.md](ai/skills/receipt-log.SKILL.md): daily Gmail → tracker log
-- [ai/skills/qbo-poster.SKILL.md](ai/skills/qbo-poster.SKILL.md): post ledger windows to QBO
-- [ai/skills/cancellation-sweep.SKILL.md](ai/skills/cancellation-sweep.SKILL.md): resolve ghost credits
+- [ai/skills/hd-setup.SKILL.md](ai/skills/hd-setup.SKILL.md): set up for a new business (QuickBooks mapping into hd-sync.json, history pull, first sync)
+- [ai/skills/hd-sync.SKILL.md](ai/skills/hd-sync.SKILL.md): the weekly sync — fetch, merge, draft, approve, post, close out
+- [ai/skills/hd-job-audit.SKILL.md](ai/skills/hd-job-audit.SKILL.md): check one job's Home Depot cost against QuickBooks by month
+- [ai/skills/cancellation-sweep.SKILL.md](ai/skills/cancellation-sweep.SKILL.md): card credits with no receipt
+- [ai/skills/qbo-poster.SKILL.md](ai/skills/qbo-poster.SKILL.md), [ai/skills/receipt-log.SKILL.md](ai/skills/receipt-log.SKILL.md): the older ledger-first path
+
+## Scripts
+
+- [src/fetch_receipts.js](src/fetch_receipts.js): browser script, run in the owner's signed-in homedepot.com tab
+- [src/merge_orderhistory.py](src/merge_orderhistory.py), [src/build_ledger.py](src/build_ledger.py), [src/gen_entries.py](src/gen_entries.py), [src/hdlib.py](src/hdlib.py), [src/closeout.py](src/closeout.py), [src/audit_job.py](src/audit_job.py): Python 3.10+, standard library only, all take --help
+- [templates/hd-sync.example.json](templates/hd-sync.example.json): the owner's private config template
 
 ## Human docs
 
-- [README.md](README.md): overview, quick start, privacy model
+- [README.md](README.md): overview and copy-paste prompts for Claude, Claude Code and ChatGPT
+- [docs/09-weekly-sync.md](docs/09-weekly-sync.md): the weekly sync step by step, including running the browser script by hand
+- [docs/10-home-depot-data.md](docs/10-home-depot-data.md): Home Depot's order history, order details, printed receipts, Pro Desk PDFs and charge history
 - [docs/04-quickbooks-workflow.md](docs/04-quickbooks-workflow.md): the bookkeeping playbook
-- [docs/06-runbook.md](docs/06-runbook.md): the recurring two-pass update loop
-- [docs/07-quickbooks-connector.md](docs/07-quickbooks-connector.md): connector/MCP capability checklist + QBO API entity mapping
-- [docs/08-claude-code.md](docs/08-claude-code.md): Claude Code setup — project skills (/hd-setup, /hd-runbook), official Intuit MCP wiring
+- [docs/07-quickbooks-connector.md](docs/07-quickbooks-connector.md): QuickBooks connector capability checklist and API entity mapping
+- [docs/08-claude-code.md](docs/08-claude-code.md): Claude Code setup and Intuit's official QuickBooks MCP server
+
+## Try it
+
+- `python3 examples/run_sync_demo.py`: one whole synthetic week, no credentials or network
